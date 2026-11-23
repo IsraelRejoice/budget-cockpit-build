@@ -1,0 +1,50 @@
+# Builds the iOS app on a GitHub Mac and sends it to TestFlight. Run by hand.
+# NOT yet exercised against a real Apple account: expect to adjust it once.
+# Secrets needed: IOS_CERT_P12_BASE64, IOS_CERT_PASSWORD, IOS_PROFILE_BASE64,
+#   IOS_TEAM_ID, IOS_PROFILE_NAME, APPSTORE_API_KEY_ID, APPSTORE_API_ISSUER_ID, APPSTORE_API_KEY_P8
+name: iOS TestFlight
+on: workflow_dispatch
+jobs:
+  ios:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: test -f public/config.js
+      - run: npm ci
+      - run: npm run build
+      - name: Add the iOS project on first run
+        run: test -d ios || npx cap add ios
+      - run: npx cap sync ios
+      - name: Install signing certificate and profile
+        run: |
+          echo "${{ secrets.IOS_CERT_P12_BASE64 }}" | base64 -d > "$RUNNER_TEMP/cert.p12"
+          echo "${{ secrets.IOS_PROFILE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/profile.mobileprovision"
+          security create-keychain -p ci "$RUNNER_TEMP/ci.keychain"
+          security default-keychain -s "$RUNNER_TEMP/ci.keychain"
+          security unlock-keychain -p ci "$RUNNER_TEMP/ci.keychain"
+          security import "$RUNNER_TEMP/cert.p12" -k "$RUNNER_TEMP/ci.keychain" -P "${{ secrets.IOS_CERT_PASSWORD }}" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k ci "$RUNNER_TEMP/ci.keychain"
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          cp "$RUNNER_TEMP/profile.mobileprovision" ~/Library/MobileDevice/Provisioning\ Profiles/
+      - name: Archive and export
+        working-directory: ios/App
+        run: |
+          xcodebuild -workspace App.xcworkspace -scheme App -configuration Release \
+            -archivePath "$RUNNER_TEMP/App.xcarchive" archive \
+            DEVELOPMENT_TEAM="${{ secrets.IOS_TEAM_ID }}" PROVISIONING_PROFILE_SPECIFIER="${{ secrets.IOS_PROFILE_NAME }}" CODE_SIGN_STYLE=Manual
+          cat > "$RUNNER_TEMP/export.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <plist version="1.0"><dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>teamID</key><string>${{ secrets.IOS_TEAM_ID }}</string>
+          </dict></plist>
+          PLIST
+          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/App.xcarchive" -exportOptionsPlist "$RUNNER_TEMP/export.plist" -exportPath "$RUNNER_TEMP/out"
+      - name: Upload to TestFlight
+        run: |
+          mkdir -p ~/.appstoreconnect/private_keys
+          echo "${{ secrets.APPSTORE_API_KEY_P8 }}" > ~/.appstoreconnect/private_keys/AuthKey_${{ secrets.APPSTORE_API_KEY_ID }}.p8
+          xcrun altool --upload-app -f "$RUNNER_TEMP"/out/*.ipa -t ios \
+            --apiKey "${{ secrets.APPSTORE_API_KEY_ID }}" --apiIssuer "${{ secrets.APPSTORE_API_ISSUER_ID }}"

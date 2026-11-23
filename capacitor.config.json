@@ -1,0 +1,9 @@
+{
+  "appId": "com.budgetcockpit.app",
+  "appName": "Budget Cockpit",
+  "webDir": "dist",
+  "server": { "androidScheme": "https" },
+  "plugins": {
+    "LocalNotifications": { "smallIcon": "ic_stat_icon", "iconColor": "#FFC24D" }
+  }
+}

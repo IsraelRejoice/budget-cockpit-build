@@ -1,0 +1,2085 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<script src="./boot-guard.js" defer></script>
+<script src="./config.js" defer></script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Budget Cockpit — Personal Finance Tracker</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0B0E13">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<link rel="icon" type="image/png" sizes="512x512" href="icons/icon-512.png">
+<meta name="app-version" content="1.17.0">
+<meta http-equiv="Content-Security-Policy" content="
+  default-src 'self';
+  script-src 'self' https://cdnjs.cloudflare.com https://challenges.cloudflare.com;
+  frame-src https://challenges.cloudflare.com;
+  style-src 'self' https://fonts.googleapis.com 'unsafe-inline';
+  font-src https://fonts.gstatic.com;
+  img-src 'self' data:;
+  connect-src 'self' https://*.supabase.co https://api.quotable.io https://api.frankfurter.dev https://challenges.cloudflare.com;
+  object-src 'none';
+  base-uri 'self';
+  frame-ancestors 'self';
+">
+<!-- CSP note: script-src no longer needs 'unsafe-inline' now that all JS
+     lives in app.js (an external file) rather than inline — this is a real
+     security improvement: an injected inline script block (from an XSS bug, a
+     compromised dependency, etc.) would now be BLOCKED from executing,
+     not just discouraged. style-src still allows 'unsafe-inline' because
+     this file uses inline style="" attributes extensively; moving those to
+     CSS classes would let that be tightened too, at the cost of a much
+     larger refactor. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&family=Playfair+Display:ital,wght@1,600;1,700&display=swap" rel="stylesheet">
+<!-- jsPDF is lazy-loaded on demand (see loadJsPdf()) instead of blocking initial page load -->
+<style>
+:root{
+  --bg:#0B0E13;
+  --panel:#151A21;
+  --panel-2:#1B222B;
+  --line:#262D38;
+  --gold:#FFC24D;
+  --teal:#00E5C7;
+  --red:#FF3B30;
+  --amber:#FFB020;
+  --text:#F5F7FA;
+  --muted:#7B8494;
+  --muted-2:#4A5262;
+  --shadow: 0 8px 24px rgba(0,0,0,.45);
+  /* Corporate "bank card" brand navy — deliberately constant across both
+     light/dark app themes, same as a physical debit card doesn't change
+     colour when your phone switches theme. Used only for the hero balance
+     card gradient and a couple of statement accents. */
+  --brand:#0F2A52;
+  --brand-2:#164070;
+}
+html[data-theme="light"]{
+  --bg:#F5F3EE;
+  --panel:#FFFFFF;
+  --panel-2:#F0ECE3;
+  --line:#DED8C8;
+  --gold:#B8790A;
+  --teal:#0E8A76;
+  --red:#D6392E;
+  --amber:#B5720F;
+  --text:#1B2030;
+  --muted:#6B7280;
+  --muted-2:#96A0B5;
+  --shadow: 0 8px 20px rgba(30,25,10,.08);
+  --brand:#12345F;
+  --brand-2:#1B4C82;
+}
+*{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;transition:background .25s,color .25s;}
+body{min-height:100vh; padding-bottom:92px;}
+.mono{font-family:'JetBrains Mono',monospace;}
+.display{font-family:'Space Grotesk',sans-serif;}
+:focus-visible{outline:2px solid var(--gold); outline-offset:2px; border-radius:4px;}
+
+.app{max-width:480px;margin:0 auto;position:relative;min-height:100vh;background:
+  radial-gradient(1200px 500px at 50% -200px, rgba(255,194,77,0.08), transparent),
+  var(--bg);}
+
+/* Header */
+.header{padding:20px 20px 8px;display:flex;justify-content:space-between;align-items:flex-start;}
+.eyebrow{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--gold);font-weight:600;}
+.h1{font-family:'Space Grotesk',sans-serif;font-size:21px;font-weight:700;margin:4px 0 0;}
+.lock-spinner{width:34px;height:34px;margin:14px auto 6px;border-radius:50%;
+  background:conic-gradient(from 0deg, var(--gold), var(--teal), var(--red), var(--gold));
+  -webkit-mask:radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 5px));
+  mask:radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 5px));
+  animation: lockSpin .85s linear infinite;}
+@keyframes lockSpin{ to{ transform:rotate(360deg); } }
+.lock-checking-text{text-align:center;font-size:12px;color:var(--muted);margin-top:0;font-weight:500;}
+.clock-style-btn{background:none;border:none;color:var(--muted);font-size:12px;cursor:pointer;padding:2px 4px;line-height:1;border-radius:6px;}
+.clock-style-btn:hover{color:var(--text);background:var(--panel);}
+#privacyToggleBtn.privacy-active{background:var(--amber);border-color:var(--amber);}
+
+/* Analog clock face themes — default (classic) uses the same palette as the
+   rest of the UI, so it already adapts to light/dark automatically. */
+#analogClockFace .clk-face{stroke:var(--line);}
+#analogClockFace .clk-center{fill:var(--text);}
+#analogClockFace #clockHandHour{stroke:var(--text);}
+#analogClockFace #clockHandMinute{stroke:var(--text);}
+#analogClockFace #clockHandSecond{stroke:var(--teal);}
+
+#analogClockFace.theme-amber .clk-face{stroke:var(--amber);}
+#analogClockFace.theme-amber .clk-center{fill:var(--amber);}
+#analogClockFace.theme-amber #clockHandHour{stroke:var(--amber);}
+#analogClockFace.theme-amber #clockHandMinute{stroke:var(--amber);}
+#analogClockFace.theme-amber #clockHandSecond{stroke:var(--red);}
+
+#analogClockFace.theme-teal .clk-face{stroke:var(--teal);}
+#analogClockFace.theme-teal .clk-center{fill:var(--teal);}
+#analogClockFace.theme-teal #clockHandHour{stroke:var(--teal);}
+#analogClockFace.theme-teal #clockHandMinute{stroke:var(--teal);}
+#analogClockFace.theme-teal #clockHandSecond{stroke:var(--amber);}
+
+#analogClockFace.theme-mono .clk-face{stroke:var(--muted);}
+#analogClockFace.theme-mono .clk-center{fill:var(--muted);}
+#analogClockFace.theme-mono #clockHandHour{stroke:var(--muted);}
+#analogClockFace.theme-mono #clockHandMinute{stroke:var(--muted);}
+#analogClockFace.theme-mono #clockHandSecond{stroke:var(--muted);}
+.theme-toggle{background:var(--panel);border:1px solid var(--line);border-radius:20px;width:40px;height:40px;
+  display:flex;align-items:center;justify-content:center;font-size:17px;cursor:pointer;color:var(--text);flex:none;}
+
+/* Hero card — big "safe to spend" number + simple bar, replacing the old
+   circular gauge cluster with a compact bank-app style balance card. */
+.hero-card{position:relative;margin:14px 20px 0;
+  background:linear-gradient(135deg, var(--brand) 0%, var(--brand-2) 65%, color-mix(in srgb, var(--brand-2) 60%, var(--teal)) 130%);
+  border:1px solid var(--line);border-radius:22px;
+  padding:22px 20px;box-shadow:var(--shadow);overflow:hidden;
+  /* Scope-override the shared text vars just for this card so its copy
+     stays legible (light) on the navy gradient in BOTH app themes,
+     without needing separate rules for every element inside it. */
+  --text:#F5F7FA; --muted:rgba(245,247,250,.72);}
+.hero-card::before{ /* card-chip accent, bank-card convention */
+  content:'';position:absolute;top:20px;right:20px;width:34px;height:24px;border-radius:5px;
+  background:linear-gradient(135deg, rgba(255,255,255,.4), rgba(255,255,255,.08));
+  border:1px solid rgba(255,255,255,.28);}
+.hero-card::after{ /* subtle corner sheen */
+  content:'';position:absolute;top:-40%;right:-15%;width:70%;height:140%;
+  background:radial-gradient(circle, rgba(255,255,255,.10), transparent 60%);pointer-events:none;}
+.hero-lbl{font-size:12px;color:var(--muted);font-weight:500;letter-spacing:.02em;
+  display:flex;align-items:center;gap:6px;}
+.hero-hide-btn{background:none;border:none;color:var(--muted);font-size:12px;cursor:pointer;
+  padding:2px 4px;line-height:1;opacity:.8;}
+.hero-hide-btn:hover{opacity:1;}
+.hero-num{font-family:'Space Grotesk',sans-serif;font-size:38px;font-weight:700;margin:4px 0 14px;letter-spacing:-.02em;
+  color:var(--text);position:relative;}
+.hero-bar-track{height:8px;border-radius:6px;background:rgba(255,255,255,.16);overflow:hidden;position:relative;}
+.hero-bar-fill{height:100%;border-radius:6px;background:var(--teal);width:0%;transition:width .5s ease;}
+.hero-sub{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-top:8px;font-family:'JetBrains Mono',monospace;position:relative;}
+.hero-stats{border-top:1px solid rgba(255,255,255,.18);padding-top:14px;margin-top:16px;position:relative;}
+.hero-stat{font-size:12px;color:var(--muted);margin-bottom:3px;}
+.hero-stat b{color:var(--text);font-family:'JetBrains Mono',monospace;font-weight:600;}
+.pace-badge{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:600;padding:5px 10px;border-radius:20px;margin-bottom:10px;}
+.pace-ahead{background:rgba(0,229,199,.15);color:var(--teal);}
+.pace-ontrack{background:rgba(255,194,77,.15);color:var(--gold);}
+.pace-behind{background:rgba(255,59,48,.15);color:var(--red);}
+
+/* Chip row — compact secondary stats (days to payday, saved, alerts) */
+.chip-row{display:flex;gap:8px;margin:12px 20px 0;}
+.chip{flex:1;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:12px 10px;text-align:center;}
+.chip .v{font-size:15px;font-weight:700;}
+.chip .l{font-size:9.5px;color:var(--muted);margin-top:3px;text-transform:uppercase;letter-spacing:.04em;}
+
+.value-flash{animation:valueFlash .6s ease;}
+@keyframes valueFlash{
+  0%{ color:var(--gold); transform:scale(1.08); display:inline-block; }
+  100%{ color:inherit; transform:scale(1); }
+}
+
+/* Budget check banner */
+/* Payday card */
+.payday-card{margin:14px 20px 0;background:linear-gradient(135deg,var(--panel-2),var(--panel));border:1px solid var(--line);
+  border-radius:16px;padding:14px 16px;}
+.payday-row{display:flex;align-items:center;justify-content:space-between;}
+.payday-item{flex:1;text-align:center;}
+.payday-lbl{font-size:9.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;}
+.payday-val{font-family:'Space Grotesk',sans-serif;font-size:13px;font-weight:600;}
+.payday-arrow{color:var(--gold);font-size:14px;flex:none;padding:0 6px;}
+.payday-countdown{margin-top:10px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:13px;
+  color:var(--gold);font-weight:700;letter-spacing:.02em;padding-top:10px;border-top:1px solid var(--line);}
+
+.budget-check{font-size:12px;color:var(--muted);}
+.budget-check .val{color:var(--text);font-family:'JetBrains Mono',monospace;font-weight:600;}
+.budget-check.over .val{color:var(--red);}
+
+/* Insights accordion (quote + weekday chart) */
+.insights-toggle{margin:14px 20px 0;width:calc(100% - 40px);display:flex;align-items:center;justify-content:space-between;
+  background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px;font-size:12px;
+  font-weight:600;color:var(--text);cursor:pointer;font-family:inherit;}
+.insights-toggle span:first-child{display:flex;align-items:center;gap:6px;}
+.insights-chevron{color:var(--muted);transition:transform .2s ease;font-size:11px;}
+.insights-toggle.open .insights-chevron{transform:rotate(180deg);}
+.insights-body{display:none;}
+.insights-body.open{display:block;}
+.insights-body .quote-card,.insights-body .mini-card{margin-top:10px;}
+
+/* Quote card */
+.quote-card{margin:14px 20px 0;border-radius:18px;padding:20px 18px 18px;position:relative;overflow:hidden;
+  background:linear-gradient(135deg, rgba(255,194,77,.14), rgba(0,229,199,.10) 60%, var(--panel) 100%);
+  border:1px solid var(--line);}
+.quote-mark{position:absolute;top:-18px;left:8px;font-family:'Playfair Display',serif;font-size:110px;font-weight:700;
+  color:var(--gold);opacity:.14;line-height:1;pointer-events:none;user-select:none;}
+.quote-eyebrow{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;position:relative;z-index:1;}
+.quote-eyebrow span{font-size:10px;text-transform:uppercase;letter-spacing:.14em;color:var(--gold);font-weight:600;}
+.quote-refresh{background:rgba(255,194,77,.12);border:1px solid rgba(255,194,77,.3);color:var(--gold);font-size:11px;
+  cursor:pointer;padding:4px 9px;border-radius:20px;font-weight:600;}
+.quote-text{font-family:'Playfair Display',serif;font-style:italic;font-weight:600;font-size:16px;line-height:1.45;
+  color:var(--text);position:relative;z-index:1;}
+.quote-card{animation:quoteIn .9s .3s cubic-bezier(.2,.8,.2,1) both;box-shadow:0 0 0 1px rgba(255,194,77,.22),0 10px 28px rgba(255,194,77,.08);}
+.quote-card::before{content:'';position:absolute;left:0;top:0;bottom:0;width:4px;background:linear-gradient(var(--gold),var(--teal));}
+.quote-card::after{content:'';position:absolute;inset:0;background:linear-gradient(105deg,transparent 40%,rgba(255,255,255,.12) 50%,transparent 60%);transform:translateX(-120%);animation:quoteShine 1.8s 1.2s ease-out 1 forwards;pointer-events:none;}
+.quote-text{font-size:17px;}
+@keyframes quoteIn{from{opacity:0;transform:translateY(14px) scale(.98);}to{opacity:1;transform:none;}}
+@keyframes quoteShine{to{transform:translateX(120%);}}
+.quote-author{font-size:11px;color:var(--gold);margin-top:10px;text-align:right;position:relative;z-index:1;
+  font-weight:600;letter-spacing:.03em;}
+
+/* Badges */
+.badge-row{margin:12px 20px 0;display:flex;flex-wrap:wrap;gap:8px;}
+.badge-pill{background:linear-gradient(135deg,rgba(255,194,77,.18),rgba(0,229,199,.12));
+  border:1px solid var(--gold);color:var(--text);font-size:11px;font-weight:600;padding:6px 12px;border-radius:20px;}
+
+/* Bill reminders */
+.bill-reminders{margin:12px 20px 0;display:flex;flex-direction:column;gap:6px;}
+.bill-pill{background:rgba(255,59,48,.1);border:1px solid rgba(255,59,48,.3);border-radius:12px;
+  padding:9px 13px;font-size:11.5px;color:var(--text);display:flex;gap:8px;align-items:center;}
+.bill-pill span{color:var(--red);font-weight:700;font-size:10.5px;flex:none;}
+
+/* Mini card (weekday chart) */
+.mini-card{margin:14px 20px 0;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:14px 16px;}
+.mini-card-title{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:8px;}
+.mini-card canvas{width:100%;height:auto;display:block;}
+.mini-card-note{font-size:11px;color:var(--gold);margin-top:6px;font-weight:600;}
+
+/* What-if simulator entry */
+.whatif-btn{margin:14px 20px 0;width:calc(100% - 40px);padding:13px;border-radius:14px;border:1px dashed var(--gold);
+  background:rgba(255,194,77,.06);color:var(--gold);font-size:13px;font-weight:600;cursor:pointer;}
+.whatif-result{background:var(--panel-2);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px;}
+.whatif-row{display:flex;justify-content:space-between;font-size:12.5px;color:var(--muted);padding:5px 0;}
+.whatif-row b{color:var(--text);font-family:'JetBrains Mono',monospace;}
+.whatif-row.highlight b{color:var(--teal);font-size:15px;}
+.share-result{background:var(--panel-2);border:1px solid var(--gold);border-radius:12px;padding:12px;margin-top:10px;}
+.share-result input{width:100%;background:var(--panel);border:1px solid var(--line);border-radius:8px;
+  color:var(--text);font-family:'JetBrains Mono',monospace;font-size:11px;padding:8px 10px;margin-bottom:8px;}
+.share-result-note{font-size:10.5px;color:var(--muted);line-height:1.4;}
+.fx-preview{background:rgba(0,229,199,.08);border:1px solid rgba(0,229,199,.3);border-radius:10px;
+  padding:10px 13px;margin:-6px 0 14px;font-size:12px;color:var(--teal);line-height:1.5;}
+.fx-preview.loading{color:var(--muted);border-color:var(--line);background:var(--panel-2);}
+.fx-preview.error{color:var(--red);border-color:rgba(255,59,48,.3);background:rgba(255,59,48,.06);}
+
+/* Section headers */
+.section{margin:26px 20px 10px;display:flex;align-items:center;justify-content:space-between;}
+.section h2{font-family:'Space Grotesk',sans-serif;font-size:15px;margin:0;}
+.section .tag{font-size:11px;color:var(--muted);}
+
+/* Category cards */
+.cat-list{margin:0 20px;display:flex;flex-direction:column;gap:10px;}
+.cat{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:13px 14px;transition:transform .12s ease;}
+.cat:active{transform:scale(.985);}
+.cat-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:10px;}
+.cat-icon-circle{width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:16px;flex:none;}
+.status-light{width:8px;height:8px;border-radius:50%;flex:none;display:inline-block;vertical-align:middle;margin-right:7px;}
+.cat-name{font-size:13px;font-weight:600;}
+.cat-group{font-size:9px;color:var(--muted-2);text-transform:uppercase;letter-spacing:.06em;}
+.cat-amt{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--muted);text-align:right;flex:none;}
+.cat-amt b{color:var(--text);}
+.bar-track{position:relative;height:8px;border-radius:6px;background:var(--panel-2);overflow:visible;}
+.bar-fill{height:100%;border-radius:6px;transition:width .5s ease;}
+.bar-thresh{position:absolute;top:-2px;width:2px;height:12px;background:var(--muted);opacity:.6;}
+.status-row{display:flex;justify-content:space-between;align-items:center;margin-top:7px;}
+.status-badge{font-size:10px;font-weight:600;padding:3px 8px;border-radius:10px;}
+.st-ok{background:rgba(0,229,199,.15);color:var(--teal);}
+.st-near{background:rgba(255,176,32,.15);color:var(--amber);}
+.st-over{background:rgba(255,59,48,.15);color:var(--red);}
+.st-target{background:rgba(139,146,166,.15);color:var(--muted);}
+.empty-hist{margin:0 20px;padding:26px 18px;text-align:center;color:var(--muted);background:var(--panel);border:1px dashed var(--line);border-radius:16px;font-size:12.5px;line-height:1.5;}
+
+/* Extra income — same statement-panel treatment as the transaction list */
+.extra-list{margin:0 20px;display:flex;flex-direction:column;
+  background:var(--panel);border:1px solid var(--line);border-radius:16px;overflow:hidden;}
+.extra-row{display:flex;justify-content:space-between;align-items:center;background:transparent;
+  border:none;border-radius:0;padding:11px 14px;}
+.extra-row:not(:last-child){border-bottom:1px solid var(--line);}
+.extra-left .src{font-size:12px;font-weight:600;}
+.extra-left .dt{font-size:10px;color:var(--muted-2);}
+.extra-right{display:flex;align-items:center;gap:8px;}
+.extra-amt{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:var(--teal);}
+.add-extra-btn{margin:0 20px;width:calc(100% - 40px);padding:11px;border-radius:12px;border:1px dashed var(--line);
+  background:none;color:var(--gold);font-size:12.5px;font-weight:600;cursor:pointer;}
+
+/* Savings tab */
+.save-card{margin:0 20px 12px;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:16px;}
+.save-top{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px;}
+.save-name{font-family:'Space Grotesk',sans-serif;font-size:14px;font-weight:600;}
+.save-amt{font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--teal);font-weight:700;}
+.save-adjust-btn, .debt-adjust-btn{background:none;border:none;color:var(--muted);font-size:13px;cursor:pointer;
+  padding:3px 6px;border-radius:6px;line-height:1;}
+.save-adjust-btn:hover, .debt-adjust-btn:hover{background:var(--panel-2);color:var(--text);}
+.save-sub{font-size:11px;color:var(--muted);margin-bottom:10px;}
+.save-bar-track{height:10px;border-radius:6px;background:var(--panel-2);overflow:hidden;margin-bottom:6px;}
+.save-bar-fill{height:100%;background:linear-gradient(90deg,var(--teal),#279684);border-radius:6px;transition:width .5s;}
+.save-foot{display:flex;justify-content:space-between;font-size:10.5px;color:var(--muted-2);}
+
+/* Debt tracker */
+.debt-card{margin:0 20px 12px;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:16px;}
+.lock-tabs{display:flex;gap:6px;margin:0 0 12px;}
+.lock-tab{flex:1;padding:9px 6px;border-radius:10px;border:1px solid var(--line);background:var(--panel-2);color:var(--muted);font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit;}
+.lock-tab.active{border-color:var(--gold);color:var(--gold);}
+.pay-hist-row{display:flex;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid var(--line);font-size:13px;}
+.pay-hist-row:last-child{border-bottom:0;}
+.pay-hist-row .ph-amt{font-weight:700;white-space:nowrap;}
+.pay-hist-row .ph-meta{color:var(--muted);font-size:11.5px;margin-top:2px;line-height:1.4;}
+.debt-card.clickable{cursor:pointer;}
+.debt-hist-hint{font-size:10.5px;color:var(--muted);margin-top:8px;}
+.debt-card.focused{border-color:var(--gold);box-shadow:0 0 0 1px var(--gold);}
+.debt-top{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px;gap:8px;}
+.debt-name{font-family:'Space Grotesk',sans-serif;font-size:14px;font-weight:600;}
+.debt-reason{font-size:11px;color:var(--muted);margin-bottom:10px;}
+.debt-amt{font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--red);font-weight:700;text-align:right;flex:none;}
+.debt-bar-track{height:10px;border-radius:6px;background:var(--panel-2);overflow:hidden;margin-bottom:6px;}
+.debt-bar-fill{height:100%;background:linear-gradient(90deg,var(--teal),#279684);border-radius:6px;transition:width .5s;}
+.debt-foot{display:flex;justify-content:space-between;align-items:center;font-size:10.5px;color:var(--muted-2);margin-bottom:10px;}
+.debt-actions{display:flex;gap:8px;}
+.debt-actions button{flex:1;padding:9px;border-radius:10px;font-size:11.5px;font-weight:600;cursor:pointer;}
+.debt-btn-pay{background:linear-gradient(135deg,var(--teal),#279684);color:#06231e;border:none;}
+.debt-btn-focus{background:var(--panel-2);color:var(--gold);border:1px solid var(--line);}
+.debt-btn-del{background:rgba(255,59,48,.1);color:var(--red);border:1px solid rgba(255,59,48,.25);flex:none;width:40px;}
+.debt-btn-edit{background:var(--panel-2);color:var(--text);border:1px solid var(--line);}
+.debt-card.in-group{border-left:3px solid var(--gold);}
+.debt-group{margin:14px 20px 6px;padding:12px 14px;border-radius:14px;background:var(--panel-2);border:1px solid var(--line);}
+.debt-group .dg-top{display:flex;justify-content:space-between;align-items:baseline;gap:10px;font-weight:700;font-size:14px;}
+.debt-group .dg-sub{font-size:11.5px;color:var(--muted);margin:4px 0 10px;line-height:1.5;}
+.debt-group button{margin:0;padding:8px 12px;border-radius:10px;font-size:12px;font-weight:600;cursor:pointer;border:1px solid var(--line);background:var(--panel);color:var(--gold);font-family:inherit;}
+.pay-hist-edit{display:block;margin:6px 0 0 auto;background:none;border:0;color:var(--gold);font-size:11.5px;font-weight:600;cursor:pointer;padding:2px 0;font-family:inherit;}
+.debt-hint{font-size:11.5px;color:var(--gold);margin:6px 2px 0;line-height:1.45;}
+.debt-btn-adjust{background:rgba(255,194,77,.12);color:var(--gold);border:1px solid rgba(255,194,77,.3);flex:none;width:40px;}
+.focus-badge{display:inline-block;font-size:9.5px;font-weight:700;color:#1a1200;background:var(--gold);
+  padding:2px 8px;border-radius:10px;margin-bottom:6px;letter-spacing:.03em;}
+.debt-focus-card{margin:0 20px 16px;background:linear-gradient(135deg,rgba(255,194,77,.15),var(--panel));
+  border:1px solid var(--gold);border-radius:16px;padding:16px;}
+.debt-focus-empty{margin:0 20px 16px;padding:24px 18px;text-align:center;color:var(--muted);background:var(--panel);
+  border:1px dashed var(--line);border-radius:16px;font-size:12.5px;}
+
+/* History */
+.hist-summary{display:flex;gap:10px;margin:0 20px;}
+.hist-card{flex:1;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px;text-align:center;}
+.hist-card .v{font-family:'JetBrains Mono',monospace;font-size:15px;font-weight:700;}
+.hist-card .l{font-size:9px;color:var(--muted);text-transform:uppercase;margin-top:3px;}
+.chart{margin:16px 20px 0;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:16px;}
+.chart-rows{display:flex;flex-direction:column;gap:14px;}
+.chart-row{display:flex;align-items:center;gap:10px;}
+.chart-row .m{width:56px;font-size:10px;color:var(--muted);flex:none;}
+.chart-bars{flex:1;display:flex;flex-direction:column;justify-content:center;gap:4px;height:20px;}
+.chart-bar{border-radius:4px;}
+.chart-legend{display:flex;gap:16px;margin-top:14px;justify-content:center;}
+.legend-item{display:flex;align-items:center;gap:6px;font-size:10px;color:var(--muted);}
+.legend-dot{width:8px;height:8px;border-radius:2px;}
+
+/* Transactions — a single "statement" panel with divider lines between
+   entries (bank activity-list convention) rather than separate floating
+   cards per row. Edit/delete sit in their own separated cluster on the
+   right (not overlapping the amount), always visible — no swipe needed. */
+.tx-list{margin:0 20px;display:flex;flex-direction:column;
+  background:var(--panel);border:1px solid var(--line);border-radius:16px;overflow:hidden;}
+.tx-swipe-wrap:not(:last-child) .tx-row{border-bottom:1px solid var(--line);}
+.tx-row{display:flex;justify-content:space-between;align-items:center;background:transparent;
+  border:none;border-radius:0;padding:14px 16px;transition:background .15s ease;}
+.tx-left{min-width:0;display:flex;align-items:center;gap:11px;flex:1;}
+.tx-icon-circle{width:34px;height:34px;border-radius:50%;background:var(--panel-2);display:flex;align-items:center;justify-content:center;font-size:14px;flex:none;}
+.tx-text{min-width:0;}
+.tx-cat{font-size:12.5px;font-weight:700;color:var(--text);}
+.tx-desc{font-size:11px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px;}
+.tx-right{text-align:right;flex:none;padding-left:10px;}
+.tx-amt-chip{background:color-mix(in srgb, var(--red) 12%, transparent);border-radius:8px;padding:2px 8px;display:inline-block;}
+.tx-amt{font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:700;color:var(--red);letter-spacing:-.01em;}
+.tx-amt::before{content:'\2212\00A0';} /* "− " — statement-style signed amount, matches the "+" on extra income */
+.tx-date{font-size:10.5px;color:var(--muted-2);margin-top:4px;}
+.tx-actions{display:flex;align-items:center;gap:2px;flex:none;margin-left:10px;padding-left:10px;border-left:1px solid var(--line);}
+.tx-action-btn{background:none;border:none;color:var(--muted);font-size:14px;padding:7px;cursor:pointer;border-radius:8px;transition:background .15s ease, color .15s ease;}
+.tx-action-btn:hover{background:var(--panel-2);color:var(--text);}
+.tx-action-del:hover{color:var(--red);}
+.tx-tag-savings{font-size:9px;color:var(--teal);font-weight:600;margin-left:6px;}
+
+.tx-swipe-wrap{position:relative;}
+
+/* Guide tab */
+.guide-block{margin:0 20px 22px;}
+.guide-block h3{font-family:'Space Grotesk',sans-serif;font-size:14px;margin:0 0 8px;color:var(--gold);}
+.faq-item{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:8px;}
+.faq-q{font-size:12.5px;font-weight:600;margin-bottom:5px;}
+.faq-a{font-size:12px;color:var(--muted);line-height:1.55;}
+.pct-table{width:100%;border-collapse:collapse;font-size:11.5px;}
+.pct-table th,.pct-table td{text-align:left;padding:8px 8px;border-bottom:1px solid var(--line);}
+.pct-table th{color:var(--muted);font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:.04em;}
+.pct-table td.num{font-family:'JetBrains Mono',monospace;color:var(--gold);white-space:nowrap;}
+.note-item{display:flex;gap:10px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:8px;}
+.note-num{font-family:'JetBrains Mono',monospace;color:var(--teal);font-weight:700;font-size:13px;flex:none;}
+.note-text{font-size:12px;color:var(--muted);line-height:1.55;}
+.note-text b{color:var(--text);}
+
+/* Nav */
+.nav{position:fixed;bottom:0;left:0;right:0;background:color-mix(in srgb, var(--bg) 90%, transparent);backdrop-filter:blur(12px);
+  border-top:1px solid var(--line);z-index:20;}
+.nav-inner{max-width:480px;margin:0 auto;display:flex;padding:8px 2px calc(env(safe-area-inset-bottom) + 8px);}
+.nav-btn{flex:1;background:none;border:none;color:var(--muted);font-family:'Inter',sans-serif;
+  font-size:9px;padding:8px 1px;display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;
+  transition:color .15s ease;}
+.nav-btn .ic{font-size:16px;transition:transform .15s ease;}
+.nav-btn.active{color:var(--gold);}
+.nav-btn.active .ic{transform:scale(1.15);}
+.nav-btn:active .ic{transform:scale(.9);}
+
+/* FAB */
+.fab{position:fixed;bottom:78px;right:calc(50% - 240px + 20px);width:56px;height:56px;border-radius:50%;
+  background:linear-gradient(135deg,var(--gold),#c98f2e);border:none;color:#1a1200;font-size:26px;font-weight:700;
+  box-shadow:0 8px 24px rgba(255,194,77,.35);cursor:pointer;z-index:21;display:flex;align-items:center;justify-content:center;}
+@media (max-width:520px){.fab{right:20px;}}
+
+.ai-fab{position:fixed;bottom:78px;left:calc(50% - 240px + 20px);height:52px;padding:0 18px 0 14px;gap:8px;border-radius:28px;
+  background:linear-gradient(135deg,var(--teal),#1c8f78 55%,var(--gold));border:none;color:#06231e;
+  box-shadow:0 8px 24px rgba(0,229,199,.4);cursor:pointer;z-index:21;display:flex;align-items:center;justify-content:center;
+  }
+.ai-fab.ai-fab-new{animation:aiPulse 2.6s ease-in-out infinite;}
+@media (max-width:520px){.ai-fab{left:20px;}}
+.ai-fab-icon{width:26px;height:26px;flex:none;animation:lotusBloom 4s ease-in-out infinite;}
+.ai-fab-label{font-weight:700;font-size:14px;letter-spacing:.02em;}
+@keyframes lotusBloom{0%,100%{transform:scale(1) rotate(0);}50%{transform:scale(1.14) rotate(-4deg);}}
+.lotus-hint{position:fixed;bottom:140px;left:calc(50% - 240px + 20px);max-width:230px;z-index:22;display:flex;gap:8px;align-items:flex-start;padding:10px 12px;border-radius:14px 14px 14px 4px;background:var(--panel);border:1px solid var(--teal);box-shadow:0 8px 24px rgba(0,0,0,.35);font-size:12.5px;line-height:1.45;animation:quoteIn .6s cubic-bezier(.2,.8,.2,1) both;}
+@media (max-width:520px){.lotus-hint{left:20px;}}
+.lotus-hint button{background:none;border:0;color:var(--muted);cursor:pointer;font-size:12px;padding:0 0 0 4px;}
+@keyframes aiPulse{
+  0%,100%{ box-shadow:0 8px 24px rgba(0,229,199,.4), 0 0 0 0 rgba(0,229,199,.5); }
+  50%{ box-shadow:0 8px 28px rgba(0,229,199,.55), 0 0 0 10px rgba(0,229,199,0); }
+}
+@keyframes aiSpin{
+  0%,85%{ transform:rotate(0deg); }
+  100%{ transform:rotate(360deg); }
+}
+
+/* AI chat sheet */
+.ai-sheet{max-height:82vh;display:flex;flex-direction:column;}
+.ai-sheet-header{display:flex;align-items:center;gap:10px;margin-bottom:12px;}
+.ai-avatar{width:34px;height:34px;border-radius:50%;flex:none;
+  background:linear-gradient(135deg,var(--teal),var(--gold));color:#06231e;font-size:16px;font-weight:700;
+  display:flex;align-items:center;justify-content:center;}
+.ai-clear-btn{margin-left:auto;background:none;border:none;color:var(--muted-2);font-size:14px;cursor:pointer;}
+.ai-chat{flex:1;overflow-y:auto;min-height:180px;max-height:44vh;display:flex;flex-direction:column;gap:10px;
+  padding:4px 2px 10px;}
+.ai-bubble{max-width:85%;padding:10px 13px;border-radius:14px;font-size:12.5px;line-height:1.5;}
+.ai-bubble.user{align-self:flex-end;background:linear-gradient(135deg,var(--gold),#c98f2e);color:#1a1200;
+  border-bottom-right-radius:4px;}
+.ai-bubble.bot{align-self:flex-start;background:var(--panel-2);border:1px solid var(--line);color:var(--text);
+  border-bottom-left-radius:4px;}
+.ai-bubble.bot.error{border-color:rgba(255,59,48,.4);color:var(--red);}
+.ai-empty{color:var(--muted);font-size:12px;padding:6px 4px;}
+.lotus-about-title{font-size:15px;font-weight:700;color:var(--text);margin-bottom:4px;}
+.lotus-about p{margin:0 0 10px;line-height:1.5;}
+.lotus-cols{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+.lotus-cols > div{background:var(--panel-2);border:1px solid var(--line);border-radius:12px;padding:10px 11px;}
+.lotus-cols b{display:block;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--gold);margin-bottom:4px;}
+.lotus-cols ul{margin:0;padding-left:15px;line-height:1.5;}
+.lotus-cols li{margin-bottom:3px;}
+@media (max-width:420px){.lotus-cols{grid-template-columns:1fr;}}
+.ai-who{display:block;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--teal);margin-bottom:3px;}
+.ai-input-row{display:flex;gap:8px;align-items:center;}
+.ai-chips{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0;}
+.ai-chip{background:var(--panel-2);border:1px solid var(--line);border-radius:14px;padding:6px 11px;
+  font-size:11.5px;color:var(--muted);cursor:pointer;white-space:nowrap;}
+.ai-chip:active{background:var(--panel);transform:scale(.97);}
+.ai-input-row input{flex:1;background:var(--panel-2);border:1px solid var(--line);border-radius:24px;
+  color:var(--text);font-family:'Inter',sans-serif;font-size:14px;padding:12px 16px;}
+.ai-input-row input:focus{outline:none;border-color:var(--teal);}
+.ai-send-btn{width:44px;height:44px;border-radius:50%;flex:none;border:none;cursor:pointer;
+  background:linear-gradient(135deg,var(--teal),#279684);color:#06231e;font-size:16px;}
+
+/* Sheet / Modal */
+.overlay{position:fixed;inset:0;background:rgba(4,6,12,.6);backdrop-filter:blur(2px);z-index:30;
+  opacity:0;pointer-events:none;transition:opacity .25s;}
+.overlay.show{opacity:1;pointer-events:auto;}
+.sheet{position:fixed;left:0;right:0;bottom:0;max-width:480px;margin:0 auto;background:var(--panel);
+  border-radius:22px 22px 0 0;border:1px solid var(--line);border-bottom:none;z-index:31;
+  transform:translateY(100%);transition:transform .3s cubic-bezier(.32,.72,0,1);
+  padding:18px 20px calc(env(safe-area-inset-bottom) + 20px);max-height:88vh;overflow-y:auto;}
+.sheet.show{transform:translateY(0);}
+.sheet-handle{width:36px;height:4px;background:var(--line);border-radius:3px;margin:0 auto 14px;}
+.sheet h3{font-family:'Space Grotesk',sans-serif;margin:0 0 16px;font-size:17px;}
+.voice-btn{background:var(--panel-2);border:1px solid var(--line);border-radius:50%;width:38px;height:38px;
+  font-size:16px;cursor:pointer;flex:none;}
+.voice-btn.listening{background:linear-gradient(135deg,var(--red),#c94848);animation:aiPulse 1.2s ease-in-out infinite;}
+.voice-status{font-size:11.5px;color:var(--gold);margin:10px 0 -4px;padding:8px 12px;background:rgba(255,194,77,.08);
+  border-radius:10px;line-height:1.4;}
+.field{margin-bottom:14px;}
+.field label{display:block;font-size:11px;color:var(--muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em;}
+.field .current{font-size:11px;color:var(--gold);margin-bottom:6px;font-family:'JetBrains Mono',monospace;}
+.field input, .field select, .field textarea{width:100%;background:var(--panel-2);border:1px solid var(--line);border-radius:10px;
+  color:var(--text);font-family:'Inter',sans-serif;font-size:15px;padding:12px 13px;}
+.field textarea{font-family:'JetBrains Mono',monospace;font-size:11.5px;line-height:1.5;resize:vertical;}
+.field input:focus, .field select:focus, .field textarea:focus{outline:none;border-color:var(--gold);}
+.amt-input{font-family:'JetBrains Mono',monospace !important;font-size:20px !important;font-weight:700;}
+.btn{width:100%;padding:14px;border-radius:12px;border:none;font-family:'Inter',sans-serif;font-weight:600;
+  font-size:14px;cursor:pointer;transition:transform .12s ease;}
+.btn:active{transform:scale(.97);}
+.btn-primary{background:linear-gradient(135deg,var(--gold),#c98f2e);color:#1a1200;}
+.btn-teal{background:linear-gradient(135deg,var(--teal),#279684);color:#06231e;}
+.btn-ghost{background:var(--panel-2);color:var(--text);border:1px solid var(--line);margin-top:8px;}
+.btn-danger{background:rgba(255,59,48,.12);color:var(--red);border:1px solid rgba(255,59,48,.3);margin-top:8px;}
+.btn-row{display:flex;gap:8px;}
+.btn-row .btn{margin-top:8px;}
+
+.settings-cat{background:var(--panel-2);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:8px;}
+.settings-cat-name{font-size:12px;font-weight:600;margin-bottom:8px;}
+.settings-row{display:flex;gap:8px;}
+.settings-row .field{flex:1;margin-bottom:0;}
+.settings-row input{padding:9px 10px;font-size:13px;}
+.theme-row{display:flex;gap:8px;margin-bottom:14px;}
+.theme-opt{flex:1;padding:12px;border-radius:12px;border:1px solid var(--line);background:var(--panel-2);
+  text-align:center;font-size:12px;font-weight:600;cursor:pointer;color:var(--muted);}
+.theme-opt.active{border-color:var(--gold);color:var(--gold);background:rgba(255,194,77,.1);}
+.budget-total-line{margin:0 20px 14px;padding:12px 14px;border-radius:12px;background:var(--panel);border:1px solid var(--line);
+  display:flex;justify-content:space-between;align-items:center;font-size:12px;}
+.budget-total-line.over{border-color:var(--red);background:rgba(255,59,48,.08);color:var(--red);}
+.budget-total-line .v{font-family:'JetBrains Mono',monospace;font-weight:700;}
+
+.view{display:none;}
+.view.active{display:block; animation:viewFadeIn .25s ease;}
+@keyframes viewFadeIn{
+  from{ opacity:0; transform:translateY(6px); }
+  to{ opacity:1; transform:translateY(0); }
+}
+.toast{position:fixed;top:16px;left:50%;transform:translateX(-50%);background:var(--panel-2);border:1px solid var(--line);
+  color:var(--text);font-size:12px;padding:10px 16px;border-radius:20px;z-index:60;opacity:0;transition:opacity .3s;pointer-events:none;
+  max-width:80%;text-align:center;display:flex;align-items:center;gap:10px;}
+.toast.show{opacity:1;pointer-events:auto;}
+.toast-undo-btn{background:none;border:none;color:var(--teal);font-weight:700;font-size:12px;cursor:pointer;padding:0;flex-shrink:0;}
+@keyframes confettiFall{
+  0%{ transform:translateY(0) rotate(0deg); opacity:1; }
+  100%{ transform:translateY(100vh) rotate(360deg); opacity:0; }
+}
+
+/* Money Weather — a one-glance cycle-health readout, cockpit-themed */
+.weather-card{margin:12px 20px 0;background:var(--panel);border:1px solid var(--line);border-radius:16px;
+  padding:14px 16px;display:flex;align-items:center;gap:12px;overflow:hidden;position:relative;}
+.weather-icon{font-size:28px;flex:none;line-height:1;filter:drop-shadow(0 0 6px rgba(255,255,255,.08));}
+.weather-icon.wx-clear{animation:wxSunPulse 3.5s ease-in-out infinite;}
+.weather-icon.wx-cloudy{animation:wxDrift 4.5s ease-in-out infinite;}
+.weather-icon.wx-storm{animation:wxFlash 1.6s steps(1) infinite;}
+.weather-body{flex:1;min-width:0;}
+.weather-headline{font-family:'Space Grotesk',sans-serif;font-size:13.5px;font-weight:700;color:var(--text);}
+.weather-sub{font-size:11px;color:var(--muted);margin-top:2px;line-height:1.4;}
+@keyframes wxSunPulse{0%,100%{transform:scale(1) rotate(0deg);}50%{transform:scale(1.12) rotate(8deg);}}
+@keyframes wxDrift{0%,100%{transform:translateX(0);}50%{transform:translateX(3px);}}
+@keyframes wxFlash{0%,90%,100%{opacity:1;}92%,96%{opacity:.45;}}
+
+/* Live FX strip — reuses the app's existing rate lookup, just surfaced */
+.fx-strip{margin:10px 20px 0;display:flex;align-items:center;gap:6px;overflow-x:auto;
+  font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--muted);padding-bottom:2px;}
+.fx-strip .fx-pill{flex:none;background:var(--panel-2);border:1px solid var(--line);border-radius:10px;
+  padding:4px 9px;white-space:nowrap;}
+.fx-strip .fx-pill b{color:var(--text);}
+.fx-strip .fx-updated{flex:none;font-size:9.5px;color:var(--muted-2);margin-left:2px;}
+
+/* Category mood icons — reacts to how a category is doing, no extra cost:
+   the status was already computed for the bar color, this just displays it */
+/* ---- First-launch app tour ---- */
+.tour-block{position:fixed;inset:0;z-index:9000;background:transparent;}
+.tour-spot{position:fixed;z-index:9001;border-radius:14px;pointer-events:none;box-shadow:0 0 0 9999px rgba(5,8,14,.72),0 0 0 2px var(--gold);transition:top .25s ease,left .25s ease,width .25s ease,height .25s ease;}
+.tour-spot.tour-nospot{box-shadow:0 0 0 9999px rgba(5,8,14,.72);width:0;height:0;top:50%;left:50%;}
+.tour-card{position:fixed;left:16px;right:16px;max-width:420px;margin:0 auto;z-index:9002;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:16px 16px 14px;box-shadow:var(--shadow);}
+.tour-card.tour-top{top:max(16px,env(safe-area-inset-top));}
+.tour-card.tour-bottom{bottom:max(16px,env(safe-area-inset-bottom));}
+.tour-card.tour-center{top:50%;transform:translateY(-50%);}
+.tour-step{font-size:11px;color:var(--muted);letter-spacing:.04em;text-transform:uppercase;margin-bottom:4px;}
+.tour-title{font-size:17px;font-weight:700;margin:0 0 6px;}
+.tour-text{font-size:13px;line-height:1.55;color:var(--muted);margin:0 0 14px;}
+.tour-dots{display:flex;gap:5px;margin-bottom:12px;}
+.tour-dot{width:6px;height:6px;border-radius:50%;background:var(--line);}
+.tour-dot.on{background:var(--gold);}
+.tour-actions{display:flex;gap:8px;align-items:center;}
+.tour-actions .btn{margin:0;width:auto;padding:10px 16px;font-size:13px;}
+.tour-skip{margin-right:auto;background:none;border:0;color:var(--muted);font-size:12px;cursor:pointer;padding:6px 2px;font-family:inherit;}
+@media (prefers-reduced-motion: reduce){ .tour-spot{transition:none;} }
+.cat-mood{display:inline-flex;vertical-align:middle;margin-left:6px;width:16px;height:16px;}
+.cat-mood svg{overflow:visible;display:block;}
+.cat-mood .mi-ring{fill:none;stroke:currentColor;stroke-width:1.6;}
+.cat-mood .mi-pulse{fill:none;stroke:currentColor;stroke-width:1.2;opacity:0;transform-box:fill-box;transform-origin:center;}
+.cat-mood .mi-glyph{fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
+.cat-mood .mi-dot{fill:currentColor;}
+.cat-mood.mood-ok{color:var(--teal);}
+.cat-mood.mood-near{color:var(--amber);}
+.cat-mood.mood-over{color:var(--red);}
+.cat-mood.mood-ok .mi-check{stroke-dasharray:14;stroke-dashoffset:14;animation:miDraw .7s .1s ease-out forwards;}
+.cat-mood.mood-ok .mi-pulse{animation:miPulse 3.2s ease-out infinite;}
+.cat-mood.mood-near .mi-pulse{animation:miPulse 2s ease-out infinite;}
+.cat-mood.mood-over .mi-pulse{animation:miPulse 1.1s ease-out infinite;}
+.cat-mood.mood-over svg{animation:miAlert .9s ease-in-out infinite;}
+@keyframes miDraw{to{stroke-dashoffset:0;}}
+@keyframes miPulse{0%{opacity:.55;transform:scale(1);}100%{opacity:0;transform:scale(1.9);}}
+@keyframes miAlert{0%,100%{transform:translateX(0);}25%{transform:translateX(-1px);}75%{transform:translateX(1px);}}
+
+/* Streak flame — grows and glows with a longer streak, no new stored field */
+.streak-flame{display:inline-block;transition:transform .3s, filter .3s;}
+.badge-pill.streak-tier-2 .streak-flame{transform:scale(1.15);filter:drop-shadow(0 0 3px rgba(255,150,50,.6));}
+.badge-pill.streak-tier-3 .streak-flame{transform:scale(1.3);filter:drop-shadow(0 0 6px rgba(255,110,30,.8));}
+.badge-pill.streak-best{border-color:var(--teal);box-shadow:0 0 8px rgba(0,229,199,.25);}
+
+/* Budget reaction overlay — a brief, non-blocking edge-glow after logging an
+   expense, giving quick positive/warning feedback without interrupting the
+   flow. pointer-events:none so it never blocks a tap underneath it. */
+.budget-reaction{position:fixed;inset:0;z-index:55;pointer-events:none;}
+.budget-reaction::before{content:'';position:absolute;inset:0;border-radius:0;
+  box-shadow:inset 0 0 0 0 transparent;}
+.budget-reaction-ok::before{animation:reactionGlowOk .8s ease-out forwards;}
+.budget-reaction-near::before{animation:reactionGlowNear .9s ease-out forwards;}
+.budget-reaction-over::before{animation:reactionGlowOver 1s ease-out forwards;}
+@keyframes reactionGlowOk{
+  0%{box-shadow:inset 0 0 0 0 rgba(0,229,199,0);}
+  30%{box-shadow:inset 0 0 40px 6px rgba(0,229,199,.35);}
+  100%{box-shadow:inset 0 0 0 0 rgba(0,229,199,0);}
+}
+@keyframes reactionGlowNear{
+  0%{box-shadow:inset 0 0 0 0 rgba(255,194,77,0);}
+  30%{box-shadow:inset 0 0 40px 6px rgba(255,194,77,.35);}
+  100%{box-shadow:inset 0 0 0 0 rgba(255,194,77,0);}
+}
+@keyframes reactionGlowOver{
+  0%{box-shadow:inset 0 0 0 0 rgba(255,59,48,0); transform:translateX(0);}
+  15%{transform:translateX(-4px);} 30%{transform:translateX(4px);} 45%{transform:translateX(0);}
+  35%{box-shadow:inset 0 0 45px 8px rgba(255,59,48,.4);}
+  100%{box-shadow:inset 0 0 0 0 rgba(255,59,48,0); transform:translateX(0);}
+}
+@media (prefers-reduced-motion: reduce){
+  .weather-icon,.cat-mood,.streak-flame,.budget-reaction::before{animation:none !important;}
+  .cat-mood *,.cat-mood svg{animation:none !important;}
+  .cat-mood.mood-ok .mi-check{stroke-dashoffset:0 !important;}
+}
+
+/* PIN lock — a fast, local-only unlock layer after idle auto-lock. Visually
+   distinct from the full email/password lock-screen (different icon-free
+   header) so it's never mistaken for "you got logged out". */
+.pin-lock-screen{position:fixed;inset:0;z-index:101;background:var(--bg);display:flex;
+  align-items:center;justify-content:center;padding:20px;}
+.pin-lock-box{width:100%;max-width:320px;text-align:center;}
+.pin-dots{display:flex;justify-content:center;gap:14px;margin:18px 0 6px;}
+.pin-dot{width:14px;height:14px;border-radius:50%;border:1.5px solid var(--line);background:transparent;
+  transition:background .15s, border-color .15s, transform .15s;}
+.pin-dot.filled{background:var(--gold);border-color:var(--gold);transform:scale(1.1);}
+.pin-error{min-height:16px;font-size:11.5px;color:var(--red);margin-bottom:6px;}
+.pin-dots.pin-shake{animation:pinShake .4s ease-in-out;}
+@keyframes pinShake{
+  0%,100%{transform:translateX(0);} 20%{transform:translateX(-8px);} 40%{transform:translateX(8px);}
+  60%{transform:translateX(-6px);} 80%{transform:translateX(6px);}
+}
+.pin-keypad{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:14px;}
+.pin-keypad button{padding:16px 0;border-radius:14px;border:1px solid var(--line);background:var(--panel);
+  color:var(--text);font-size:19px;font-family:'JetBrains Mono',monospace;cursor:pointer;}
+.pin-keypad button:active{background:var(--panel-2);transform:scale(.96);}
+.pin-keypad button.pin-key-ghost{font-size:12px;font-family:'Space Grotesk',sans-serif;color:var(--muted);
+  background:transparent;border-color:transparent;}
+
+.confirm-box{position:fixed;left:20px;right:20px;top:50%;transform:translate(0,-50%);max-width:400px;margin:0 auto;
+  background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:20px;z-index:41;
+  box-shadow:var(--shadow); opacity:0; pointer-events:none; transition:opacity .2s;}
+.confirm-box.show{opacity:1;pointer-events:auto;}
+.confirm-box h4{font-family:'Space Grotesk',sans-serif;margin:0 0 8px;font-size:15px;}
+.confirm-box p{font-size:12.5px;color:var(--muted);line-height:1.5;margin:0 0 16px;}
+
+.report-charts{display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;}
+.report-charts canvas{background:var(--panel-2);border-radius:10px;border:1px solid var(--line);max-width:100%;}
+
+/* Lock screen */
+.lock-screen{position:fixed;inset:0;z-index:100;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:20px;}
+.lock-box{width:100%;max-width:340px;text-align:center;}
+.lock-icon{font-size:40px;margin-bottom:10px;}
+.lock-title{font-family:'Space Grotesk',sans-serif;font-size:20px;font-weight:700;margin-bottom:4px;}
+.lock-sub{font-size:12.5px;color:var(--muted);margin:0 0 20px;}
+.lock-input{width:100%;background:var(--panel-2);border:1px solid var(--line);border-radius:12px;
+  color:var(--text);font-family:'Inter',sans-serif;font-size:16px;padding:14px 16px;text-align:center;}
+.lock-input:focus{outline:none;border-color:var(--gold);}
+/* ---- household budget ---- */
+.hh-chip{display:inline-block;margin-left:6px;padding:1px 8px;border-radius:999px;font-size:10px;font-weight:600;color:#0B0E13;background:var(--c,#FFC24D);vertical-align:1px;}
+.hh-chips{display:flex;flex-wrap:wrap;gap:8px;}
+.hh-pick{border:1px solid var(--line);background:var(--panel-2);color:var(--text);border-radius:999px;padding:8px 14px;font-size:13px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;}
+.hh-pick .hh-dot{width:10px;height:10px;}
+.hh-pick.on{border-color:var(--gold);background:var(--panel);box-shadow:0 0 0 1px var(--gold) inset;}
+.hh-dot{display:inline-block;width:12px;height:12px;border-radius:50%;background:var(--c,#FFC24D);flex:none;}
+.hh-person{margin-bottom:14px;}
+.hh-row{display:flex;align-items:center;gap:8px;font-size:14px;}
+.hh-row b{flex:1;font-weight:600;}
+.hh-bar{height:6px;border-radius:6px;background:var(--panel-2);margin:6px 0 3px;overflow:hidden;}
+.hh-bar i{display:block;height:100%;border-radius:6px;}
+.hh-sub{font-size:11px;color:var(--muted);}
+.hh-member{display:flex;align-items:center;gap:8px;margin-bottom:8px;}
+.hh-member input{flex:1;min-width:0;margin:0;}
+.hh-dotbtn{background:none;border:0;padding:8px;cursor:pointer;}
+.hh-x{background:none;border:0;color:var(--muted);font-size:16px;padding:8px;cursor:pointer;}
+.hh-note{font-size:11px;color:var(--muted);line-height:1.5;margin:8px 0 0;}
+.pw-wrap{position:relative;}
+.pw-input{padding-right:64px !important;}
+.pw-eye{position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:0;color:var(--gold);font-size:12px;font-weight:600;padding:8px 10px;cursor:pointer;border-radius:8px;}
+.pw-eye:active{background:var(--panel-2);}
+
+.lock-error{margin-top:12px;font-size:12px;color:var(--red);min-height:16px;}
+
+/* Loading screen — cinematic intro: a gauge draws itself and its needle sweeps,
+   the name rises in letter by letter, then the whole scene pushes toward you
+   and fades to reveal the login (or your dashboard). Pure CSS/SVG, no assets. */
+.loading-screen{position:fixed;inset:0;z-index:101;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden;
+  background:radial-gradient(120% 90% at 50% 30%, color-mix(in srgb,var(--panel) 85%,var(--bg)) 0%, var(--bg) 70%);
+  transition:opacity .65s ease, transform .65s cubic-bezier(.4,0,.2,1), filter .65s ease;}
+.loading-screen.leaving{opacity:0;transform:scale(1.12);filter:blur(7px);pointer-events:none;}
+.intro-glow{position:absolute;width:140vmax;height:140vmax;left:50%;top:42%;transform:translate(-50%,-50%);pointer-events:none;
+  background:radial-gradient(closest-side, color-mix(in srgb,var(--gold) 16%,transparent), transparent 62%);
+  animation:introGlow 6s ease-in-out infinite alternate;}
+@keyframes introGlow{from{transform:translate(-50%,-50%) scale(.8);opacity:.55;}to{transform:translate(-50%,-50%) scale(1.05);opacity:1;}}
+.intro-stage{position:relative;display:flex;flex-direction:column;align-items:center;gap:16px;width:min(86vw,320px);}
+.intro-dial{width:min(62vw,230px);height:auto;overflow:visible;filter:drop-shadow(0 0 18px color-mix(in srgb,var(--gold) 28%,transparent));}
+.dial-track{fill:none;stroke:var(--line);stroke-width:5;stroke-linecap:round;}
+.dial-arc{fill:none;stroke:url(#dialGrad);stroke-width:5;stroke-linecap:round;stroke-dasharray:100;stroke-dashoffset:100;animation:dialDraw 1.3s .15s cubic-bezier(.5,0,.2,1) forwards;}
+@keyframes dialDraw{to{stroke-dashoffset:0;}}
+.dial-ticks line{stroke:var(--muted-2);stroke-width:1.6;stroke-linecap:round;opacity:0;animation:tickIn .35s ease-out forwards;animation-delay:calc(.35s + var(--i) * 55ms);}
+.dial-ticks line.big{stroke:var(--muted);stroke-width:2.4;}
+@keyframes tickIn{from{opacity:0;}to{opacity:1;}}
+.dial-needle{transform-origin:100px 100px;transform:rotate(-120deg);animation:needleSweep 1.7s .5s cubic-bezier(.3,1.2,.4,1) forwards;}
+.dial-needle line{stroke:var(--gold);stroke-width:3.2;stroke-linecap:round;}
+.dial-needle circle{fill:var(--gold);}
+.dial-hub{fill:var(--bg);}
+@keyframes needleSweep{0%{transform:rotate(-120deg);}55%{transform:rotate(84deg);}75%{transform:rotate(52deg);}100%{transform:rotate(64deg);}}
+.intro-title{display:flex;justify-content:center;flex-wrap:wrap;font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:22px;letter-spacing:.14em;color:var(--text);}
+.il{display:inline-block;opacity:0;transform:translateY(14px);filter:blur(6px);animation:letterIn .6s cubic-bezier(.2,.8,.2,1) forwards;animation-delay:calc(1s + var(--i) * 45ms);}
+.il.sp{width:.5em;}
+@keyframes letterIn{to{opacity:1;transform:none;filter:none;}}
+.intro-tag{font-size:12.5px;color:var(--muted);letter-spacing:.06em;opacity:0;animation:tagIn .8s 1.9s ease-out forwards;}
+@keyframes tagIn{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:none;}}
+.intro-bar{width:160px;height:3px;border-radius:3px;background:var(--line);overflow:hidden;margin-top:6px;opacity:0;animation:tagIn .5s 1.2s ease-out forwards;}
+.intro-bar span{display:block;height:100%;width:40%;border-radius:3px;background:linear-gradient(90deg,var(--teal),var(--gold));animation:introBar 1.5s ease-in-out infinite;}
+@keyframes introBar{0%{transform:translateX(-110%);}100%{transform:translateX(280%);}}
+.intro-status{position:relative;height:16px;width:100%;text-align:center;font-size:11.5px;color:var(--muted-2);}
+.intro-status span{position:absolute;inset:0;opacity:0;animation:statusCycle 6s infinite;}
+.intro-status span:nth-child(2){animation-delay:2s;}
+.intro-status span:nth-child(3){animation-delay:4s;}
+@keyframes statusCycle{0%,4%{opacity:0;transform:translateY(5px);}10%,28%{opacity:1;transform:none;}34%,100%{opacity:0;}}
+.intro-skip{position:absolute;bottom:max(22px,env(safe-area-inset-bottom));font-size:11px;color:var(--muted-2);letter-spacing:.08em;text-transform:uppercase;opacity:0;animation:tagIn .6s 1.4s ease-out forwards;}
+/* the login card rises in once the intro lifts */
+body.intro-playing .lock-box{opacity:0;}
+body:not(.intro-playing) .lock-box > *{animation:lockRise .7s cubic-bezier(.2,.8,.2,1) both;}
+body:not(.intro-playing) .lock-box > *:nth-child(2){animation-delay:.06s;}
+body:not(.intro-playing) .lock-box > *:nth-child(3){animation-delay:.12s;}
+body:not(.intro-playing) .lock-box > *:nth-child(4){animation-delay:.18s;}
+body:not(.intro-playing) .lock-box > *:nth-child(n+5){animation-delay:.24s;}
+@keyframes lockRise{from{opacity:0;transform:translateY(18px);}to{opacity:1;transform:none;}}
+@media (prefers-reduced-motion: reduce){
+  .quote-card,.quote-card::after,.lotus-hint,.ai-fab-icon,.ai-fab.ai-fab-new{animation:none !important;}
+  .quote-card::after{display:none;}
+  .loading-screen{transition:opacity .3s ease;}
+  .loading-screen.leaving{transform:none;filter:none;}
+  .intro-glow,.intro-bar span,.intro-status span{animation:none;}
+  .dial-arc{animation:none;stroke-dashoffset:0;}
+  .dial-ticks line,.il,.intro-tag,.intro-bar,.intro-skip{animation:none;opacity:1;transform:none;filter:none;}
+  .dial-needle{animation:none;transform:rotate(64deg);}
+  .intro-status span:first-child{opacity:1;}
+  body:not(.intro-playing) .lock-box > *{animation:none;}
+}
+.debt-wo{font-size:11.5px;color:var(--amber);margin:2px 0 8px;}
+.intro-fail{position:absolute;left:16px;right:16px;bottom:max(20px,env(safe-area-inset-bottom));max-width:440px;margin:0 auto;padding:16px;border-radius:16px;background:var(--panel);border:1px solid var(--red);z-index:3;text-align:left;box-shadow:0 12px 36px rgba(0,0,0,.45);}
+.intro-fail-title{font-weight:700;font-size:15px;margin-bottom:6px;}
+.intro-fail-msg{font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:12px;word-break:break-word;}
+.intro-fail-btns{display:flex;gap:8px;flex-wrap:wrap;}
+.intro-fail-btns button{flex:1;min-width:130px;padding:11px 12px;border-radius:10px;border:0;background:var(--gold);color:#1A1204;font-weight:700;font-size:13px;cursor:pointer;font-family:inherit;}
+.intro-fail-btns button.g{background:var(--panel-2);color:var(--text);border:1px solid var(--line);}
+.intro-fail-note{font-size:11px;color:var(--muted);margin-top:10px;}
+.diag-box{margin-top:12px;display:flex;flex-direction:column;gap:5px;}
+.diag{font-size:11.5px;line-height:1.5;color:var(--muted);padding:7px 10px;border-radius:10px;background:var(--panel-2);border:1px solid var(--line);}
+.diag.ok{color:var(--teal);}
+.diag.bad{color:var(--red);border-color:color-mix(in srgb,var(--red) 40%,var(--line));}
+/* the app tour freezes the page behind it */
+html.tour-lock,body.tour-lock{overflow:hidden !important;overscroll-behavior:none;}
+.tour-block{touch-action:none;}
+/* savings vs investments */
+.sv-summary{margin:16px 20px 8px;padding:14px 16px;border-radius:16px;border:1px solid var(--line);background:var(--panel);}
+.sv-summary.savings{border-left:4px solid var(--teal);}
+.sv-summary.investment{border-left:4px solid var(--gold);}
+.sv-sum-top{display:flex;justify-content:space-between;align-items:baseline;gap:10px;}
+.sv-sum-title{font-weight:700;font-size:14px;}
+.sv-sum-total{font-weight:700;font-size:18px;}
+.sv-sum-sub{font-size:11.5px;color:var(--muted);margin-top:4px;line-height:1.5;}
+.sv-empty{margin:0 20px 8px;font-size:12px;color:var(--muted);line-height:1.5;}
+/* while figures are hidden, free-text notes (which often contain amounts) are blurred and untouchable */
+body.privacy-on #personalNotesInput{filter:blur(7px);pointer-events:none;user-select:none;-webkit-user-select:none;}
+.pay-setup-card{margin:14px 20px 0;padding:16px;border-radius:16px;background:var(--panel);border:1px solid var(--gold);box-shadow:0 0 0 4px color-mix(in srgb,var(--gold) 12%,transparent);}
+.pay-setup-card .ps-title{font-weight:700;font-size:15px;margin-bottom:6px;}
+.pay-setup-card .ps-text{font-size:12.5px;color:var(--muted);line-height:1.55;margin-bottom:12px;}
+.pay-setup-card .btn{margin:0;}
+@keyframes flashAttn{0%,100%{box-shadow:0 0 0 0 transparent;}30%{box-shadow:0 0 0 4px var(--gold);}}
+.flash-attn{animation:flashAttn 1.1s ease-in-out 2;}
+/* Hover states — desktop/web only, never affects touch devices */
+@media (hover:hover) and (pointer:fine){
+  .btn{transition:transform .15s ease, box-shadow .15s ease, filter .15s ease;}
+  .btn:hover{transform:translateY(-1px); filter:brightness(1.06);}
+  .btn-primary:hover, .btn-teal:hover{box-shadow:0 6px 16px rgba(255,194,77,.25);}
+  .cat, .save-card, .debt-card, .hist-card, .faq-item, .note-item{
+    transition:transform .15s ease, border-color .15s ease;}
+  .cat:hover, .save-card:hover, .debt-card:hover, .hist-card:hover{
+    transform:translateY(-2px); border-color:var(--gold);}
+  /* extra-row/tx-row are now flat statement rows inside a shared panel
+     (no individual border to highlight) — hover gives a background tint instead. */
+  .extra-row, .tx-row{transition:background .15s ease;}
+  .extra-row:hover, .tx-swipe-wrap:hover .tx-row{background:var(--panel-2);}
+  .tx-row:hover{border-color:var(--gold);}
+  .nav-btn{transition:color .15s ease, transform .15s ease;}
+  .nav-btn:hover{color:var(--gold); transform:translateY(-1px);}
+  .theme-toggle:hover, .ai-fab:hover, .fab:hover, .ai-send-btn:hover, .quote-refresh:hover{
+    transform:scale(1.06); transition:transform .15s ease;}
+  .theme-opt{transition:border-color .15s ease, color .15s ease;}
+  .theme-opt:hover{border-color:var(--gold); color:var(--gold);}
+  .section .link-btn:hover{text-decoration:underline;}
+  .cat-delete:hover, .tx-del:hover{opacity:.7;}
+  .debt-actions button:hover{filter:brightness(1.08);}
+}
+
+/* v1.16.2: hero motion, tappable categories, description chips, loan dates */
+.hero-card > *:not(.hero-fx){position:relative;z-index:1;}
+.hero-fx{position:absolute;inset:0;overflow:hidden;pointer-events:none;z-index:0;border-radius:inherit;}
+.hero-fx .coin{position:absolute;bottom:-14px;width:12px;height:12px;border-radius:50%;
+  background:radial-gradient(circle at 35% 30%, rgba(255,255,255,.75), rgba(255,194,77,.55) 55%, rgba(255,194,77,.15));
+  opacity:0;animation:coinRise 9s linear infinite;}
+.hero-fx .c1{left:8%;animation-delay:0s;}
+.hero-fx .c2{left:27%;animation-delay:2.4s;width:9px;height:9px;animation-duration:11s;}
+.hero-fx .c3{left:52%;animation-delay:4.8s;}
+.hero-fx .c4{left:73%;animation-delay:1.3s;width:8px;height:8px;animation-duration:10s;}
+.hero-fx .c5{left:90%;animation-delay:6.2s;width:10px;height:10px;}
+@keyframes coinRise{0%{transform:translateY(0) scale(.7);opacity:0;}12%{opacity:.8;}80%{opacity:.5;}100%{transform:translateY(-190px) scale(1.1);opacity:0;}}
+.hero-wave{position:absolute;left:0;bottom:0;width:200%;height:46px;}
+.hero-wave path{fill:rgba(255,255,255,.07);}
+.hero-wave .w1{animation:waveSlide 9s linear infinite;}
+.hero-wave .w2{fill:rgba(0,229,199,.08);animation:waveSlide 14s linear infinite reverse;}
+@keyframes waveSlide{from{transform:translateX(0);}to{transform:translateX(-50%);}}
+.hero-card .hero-bar-fill{background-image:linear-gradient(90deg,transparent 0,rgba(255,255,255,.35) 50%,transparent 100%);background-size:60px 100%;background-repeat:no-repeat;animation:barShine 2.8s ease-in-out infinite;}
+@keyframes barShine{from{background-position:-60px 0;}to{background-position:240px 0;}}
+.hero-card.hero-neg .hero-num{color:#FFB4AE;}
+.hero-card.hero-neg .hero-fx .coin{background:radial-gradient(circle at 35% 30%, rgba(255,255,255,.7), rgba(255,59,48,.5) 55%, rgba(255,59,48,.12));}
+.hero-nudge{font-size:11.5px;line-height:1.5;color:var(--muted);margin-top:14px;padding:9px 11px;border-radius:12px;background:rgba(255,255,255,.1);}
+.hero-nudge button{background:none;border:0;color:var(--gold);font-weight:700;font-size:11.5px;cursor:pointer;padding:0 0 0 4px;font-family:inherit;}
+@media (prefers-reduced-motion: reduce){.hero-fx .coin,.hero-wave path,.hero-card .hero-bar-fill{animation:none;}.hero-fx .coin{display:none;}}
+.cat.clickable{cursor:pointer;}
+.desc-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;}
+.desc-chips:empty{display:none;}
+.desc-chip{background:var(--panel);border:1px solid var(--line);color:var(--text);border-radius:16px;padding:6px 11px;font-size:12px;cursor:pointer;font-family:inherit;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.desc-chip:active{transform:scale(.96);}
+.loan-due-line{font-size:11.5px;color:var(--muted);margin:2px 0 6px;}
+.loan-due-line.soon{color:var(--gold);font-weight:600;}
+.loan-due-line.late{color:var(--red);font-weight:600;}
+.loan-due-pill{background:rgba(255,194,77,.1);border-color:rgba(255,194,77,.35);}
+.loan-due-pill span{color:var(--gold);}
+</style>
+</head>
+<body>
+
+<div class="lock-screen" id="lockScreen" style="display:none;">
+  <div class="lock-box">
+    <div class="lock-icon">🔒</div>
+    <div class="lock-title">Budget Cockpit</div>
+    <p class="lock-sub" id="lockSub">Log in to your budget</p>
+    <div id="lockMethodTabs" class="lock-tabs" style="display:none;">
+      <button type="button" class="lock-tab" id="lockTabPassword" data-method="password">Password</button>
+      <button type="button" class="lock-tab" id="lockTabPin" data-method="pin">PIN</button>
+      <button type="button" class="lock-tab" id="lockTabBio" data-method="bio">Biometrics</button>
+    </div>
+    <div id="lockPinPanel" style="display:none;">
+      <input type="password" id="lockPinInput" class="lock-input" placeholder="6-digit PIN" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off" style="text-align:center;letter-spacing:.4em;">
+      <button class="btn btn-primary" id="lockPinBtn" type="button" style="margin-top:10px;">Unlock with PIN</button>
+    </div>
+    <div id="lockBioPanel" style="display:none;">
+      <button class="btn btn-primary" id="lockBioBtn" type="button">Use fingerprint / face</button>
+    </div>
+    <div id="lockPasswordPanel">
+    <input type="email" id="lockEmailInput" class="lock-input" placeholder="Email" autocomplete="username" style="margin-bottom:8px;">
+    <div class="pw-wrap"><input type="password" id="lockPasswordInput" class="lock-input pw-input" placeholder="Password" autocomplete="current-password"><button type="button" class="pw-eye" data-pw-toggle="lockPasswordInput" aria-label="Show password" aria-pressed="false">Show</button></div>
+    <div class="pw-wrap" id="lockConfirmWrap" style="display:none;margin-top:8px;"><input type="password" id="lockConfirmInput" class="lock-input pw-input" placeholder="Confirm password" autocomplete="new-password"><button type="button" class="pw-eye" data-pw-toggle="lockConfirmInput" aria-label="Show password" aria-pressed="false">Show</button></div>
+    <button class="btn btn-primary" id="lockSubmitBtn" style="margin-top:10px;">Log in</button>
+    <button class="btn btn-ghost" id="lockToggleModeBtn" type="button" style="margin-top:8px;">New here? Create an account</button>
+    <div id="turnstileAuthBox" style="margin:10px 0;"></div>
+    <button class="btn btn-ghost" id="lockForgotPwBtn" type="button" style="margin-top:2px;font-size:12px;">Forgot password?</button>
+    </div>
+    <div class="lock-spinner" id="lockSpinner" style="display:none;"></div>
+    <div class="lock-checking-text" id="lockCheckingText" style="display:none;">Checking your details…</div>
+    <div class="lock-error" id="lockError"></div>
+    <div style="margin-top:14px;font-size:11px;text-align:center;"><a href="privacy.html" target="_blank" rel="noopener" style="color:var(--muted);">Privacy policy</a></div>
+  </div>
+</div>
+
+<div class="lock-screen" id="pwResetRequestScreen" style="display:none;">
+  <div class="lock-box">
+    <div class="lock-icon">✉️</div>
+    <div class="lock-title">Reset your password</div>
+    <p class="lock-sub">Enter the email on your account and we'll send a reset link.</p>
+    <input type="email" id="pwResetEmailInput" class="lock-input" placeholder="Email" autocomplete="username">
+    <div id="turnstileResetBox" style="margin:10px 0;"></div>
+    <button class="btn btn-primary" id="pwResetSendBtn" style="margin-top:10px;">Send reset link</button>
+    <button class="btn btn-ghost" id="pwResetBackBtn" type="button" style="margin-top:8px;">Back to log in</button>
+    <div class="lock-spinner" id="pwResetSpinner" style="display:none;"></div>
+    <div class="lock-error" id="pwResetError"></div>
+    <div class="lock-error" id="pwResetSuccess" style="color:var(--teal);"></div>
+  </div>
+</div>
+
+<div class="lock-screen" id="pwResetCompleteScreen" style="display:none;">
+  <div class="lock-box">
+    <div class="lock-icon">🔑</div>
+    <div class="lock-title">Set a new password</div>
+    <p class="lock-sub">You followed a reset link — choose a new password below.</p>
+    <div class="pw-wrap" style="margin-bottom:8px;"><input type="password" id="pwNewInput" class="lock-input pw-input" placeholder="New password (at least 6 characters)" autocomplete="new-password" ><button type="button" class="pw-eye" data-pw-toggle="pwNewInput" aria-label="Show password" aria-pressed="false">Show</button></div>
+    <div class="pw-wrap"><input type="password" id="pwNewConfirmInput" class="lock-input pw-input" placeholder="Confirm new password" autocomplete="new-password"><button type="button" class="pw-eye" data-pw-toggle="pwNewConfirmInput" aria-label="Show password" aria-pressed="false">Show</button></div>
+    <button class="btn btn-primary" id="pwResetCompleteBtn" style="margin-top:10px;">Set new password &amp; log in</button>
+    <div class="lock-spinner" id="pwResetCompleteSpinner" style="display:none;"></div>
+    <div class="lock-error" id="pwResetCompleteError"></div>
+  </div>
+</div>
+
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <symbol id="lotusSym" viewBox="0 0 32 32">
+    <g fill="currentColor">
+      <path d="M16 3.5c3.2 4.2 4.6 8.600 0 15.800-4.600-7.200-3.200-11.600 0-15.800z"/>
+      <path opacity=".85" d="M15.200 19.600C14 12 9.600 8.600 4.500 8.800c0 6.600 4.600 10.800 10.700 10.800z"/>
+      <path opacity=".85" d="M16.800 19.600C18 12 22.400 8.600 27.500 8.800c0 6.600-4.600 10.800-10.700 10.800z"/>
+      <path opacity=".6" d="M15.400 21.400C8.600 22 3.600 20.200 1.400 15c6.200-1 11.200 1.200 14 6.400z"/>
+      <path opacity=".6" d="M16.600 21.400c6.800.6 11.800-1.200 14-6.400-6.200-1-11.200 1.200-14 6.400z"/>
+    </g>
+    <path d="M7 26c5 3 13 3 18 0" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" opacity=".5"/>
+  </symbol>
+</svg>
+
+<div class="loading-screen" id="loadingScreen" role="status" aria-label="Loading Budget Cockpit">
+  <div class="intro-glow"></div>
+  <div class="intro-stage">
+    <svg class="intro-dial" viewBox="0 0 200 200" aria-hidden="true">
+      <defs>
+        <linearGradient id="dialGrad" x1="0" y1="1" x2="1" y2="0">
+          <stop offset="0%" style="stop-color:var(--teal)"/>
+          <stop offset="100%" style="stop-color:var(--gold)"/>
+        </linearGradient>
+      </defs>
+      <path class="dial-track" d="M27.25 142 A84 84 0 1 1 172.75 142"/>
+      <path class="dial-arc" pathLength="100" d="M27.25 142 A84 84 0 1 1 172.75 142"/>
+      <g class="dial-ticks"><line style="--i:0" x1="41.1" y1="134.0" x2="32.5" y2="139.0" class="big"/><line style="--i:1" x1="29.1" y1="112.5" x2="23.2" y2="113.5"/><line style="--i:2" x1="29.1" y1="87.5" x2="23.2" y2="86.5"/><line style="--i:3" x1="41.1" y1="66.0" x2="32.5" y2="61.0" class="big"/><line style="--i:4" x1="53.7" y1="44.8" x2="49.9" y2="40.2"/><line style="--i:5" x1="75.4" y1="32.3" x2="73.3" y2="26.7"/><line style="--i:6" x1="100.0" y1="32.0" x2="100.0" y2="22.0" class="big"/><line style="--i:7" x1="124.6" y1="32.3" x2="126.7" y2="26.7"/><line style="--i:8" x1="146.3" y1="44.8" x2="150.1" y2="40.2"/><line style="--i:9" x1="158.9" y1="66.0" x2="167.5" y2="61.0" class="big"/><line style="--i:10" x1="170.9" y1="87.5" x2="176.8" y2="86.5"/><line style="--i:11" x1="170.9" y1="112.5" x2="176.8" y2="113.5"/><line style="--i:12" x1="158.9" y1="134.0" x2="167.5" y2="139.0" class="big"/></g>
+      <g class="dial-needle"><line x1="100" y1="100" x2="100" y2="40"/><circle cx="100" cy="100" r="7"/></g>
+      <circle class="dial-hub" cx="100" cy="100" r="2.5"/>
+    </svg>
+    <div class="intro-title" aria-hidden="true"><span class="il" style="--i:0">B</span><span class="il" style="--i:1">U</span><span class="il" style="--i:2">D</span><span class="il" style="--i:3">G</span><span class="il" style="--i:4">E</span><span class="il" style="--i:5">T</span><span class="il sp" style="--i:6">&nbsp;</span><span class="il" style="--i:7">C</span><span class="il" style="--i:8">O</span><span class="il" style="--i:9">C</span><span class="il" style="--i:10">K</span><span class="il" style="--i:11">P</span><span class="il" style="--i:12">I</span><span class="il" style="--i:13">T</span></div>
+    <div class="intro-tag">Your money, in full view</div>
+    <div class="intro-bar"><span></span></div>
+    <div class="intro-status"><span>Securing your session…</span><span>Syncing your numbers…</span><span>Almost there…</span></div>
+  </div>
+  <div class="intro-skip">Tap to skip</div>
+  <div class="intro-fail" id="introFail" style="display:none" role="alert">
+    <div class="intro-fail-title">The app didn't start properly</div>
+    <div class="intro-fail-msg" id="introFailMsg"></div>
+    <div class="intro-fail-btns">
+      <button type="button" id="introFailReload">Reload</button>
+      <button type="button" id="introFailReset" class="g">Reset app cache &amp; reload</button>
+    </div>
+    <div class="intro-fail-note">Your data is safe — it lives in your account, not on this device.</div>
+  </div>
+</div>
+
+
+<div class="app">
+
+  <!-- ================= DASHBOARD ================= -->
+  <div class="view active" id="view-dashboard">
+    <div class="header">
+      <div>
+        <div class="eyebrow">Budget Cockpit</div>
+        <div class="h1" id="cycleLabel">Current pay cycle</div>
+        <div class="clock-row" style="display:flex;align-items:center;gap:8px;margin-top:6px;">
+          <div class="clock" id="liveClock" style="margin-top:0;">—</div>
+          <svg id="analogClockFace" width="38" height="38" viewBox="0 0 40 40" style="display:none;flex-shrink:0;" aria-label="Analog clock">
+            <circle class="clk-face" cx="20" cy="20" r="18" fill="none" stroke-width="3"/>
+            <circle class="clk-center" cx="20" cy="20" r="2.4"/>
+            <line id="clockHandHour" x1="20" y1="20" x2="20" y2="11" stroke-width="3.5" stroke-linecap="round"/>
+            <line id="clockHandMinute" x1="20" y1="20" x2="20" y2="7" stroke-width="3" stroke-linecap="round"/>
+            <line id="clockHandSecond" x1="20" y1="20" x2="20" y2="6" stroke-width="1.75"/>
+          </svg>
+          <button class="clock-style-btn" id="clockStyleBtn" type="button" aria-label="Switch clock style" title="Switch between digital and analog clock">🕐</button>
+          <button class="clock-style-btn" id="clockThemeBtn" type="button" aria-label="Change clock theme" title="Change clock face theme" style="display:none;">🎨</button>
+        </div>
+        <div class="clock" id="syncIndicator" style="margin-top:2px;">● Synced</div>
+      </div>
+      <button class="theme-toggle" id="privacyToggleBtn" aria-label="Toggle privacy mode" title="Hide figures (privacy mode)" style="margin-right:8px;">👁️</button>
+      <button class="theme-toggle" id="themeToggleBtn" aria-label="Toggle light/dark mode">🌙</button>
+    </div>
+
+    <div class="hero-card">
+      <div class="hero-fx" aria-hidden="true">
+        <i class="coin c1"></i><i class="coin c2"></i><i class="coin c3"></i><i class="coin c4"></i><i class="coin c5"></i>
+        <svg class="hero-wave" viewBox="0 0 400 60" preserveAspectRatio="none"><path class="w1" d="M0 30 Q 50 6 100 30 T 200 30 T 300 30 T 400 30 V60 H0Z"/><path class="w2" d="M0 38 Q 50 16 100 38 T 200 38 T 300 38 T 400 38 V60 H0Z"/></svg>
+      </div>
+      <div class="hero-lbl">Available this cycle
+        <button class="hero-hide-btn" id="heroHideBtn" type="button" aria-label="Hide this balance" title="Hide just this balance">👁️</button>
+      </div>
+      <div class="hero-num mono" id="safeToday">—</div>
+      <div class="hero-bar-track"><div class="hero-bar-fill" id="heroBarFill"></div></div>
+      <div class="hero-sub"><span id="heroSubSpent">—</span><span id="gaugePct">0% of budget</span></div>
+      <div class="hero-nudge" id="incomeNudge" style="display:none;">No income added yet. Spending shows as a negative balance until you add it. <button type="button" id="incomeNudgeBtn">Add income</button></div>
+      <div class="hero-stats">
+        <div class="pace-badge" id="paceBadge">On track</div>
+        <div class="hero-stat">Income <b id="statIncome">—</b></div>
+        <div class="hero-stat">Spent <b id="statSpent">—</b> <span id="spentCompare" style="font-size:10px;"></span></div>
+        <div class="hero-stat" id="safePerDayRow">Safe to spend/day <b id="statSafePerDay">—</b></div>
+        <div class="hero-stat budget-check" id="budgetCheck">Budgeted (+savings) <span class="val" id="budgetCheckVal">—</span></div>
+      </div>
+    </div>
+
+    <div class="weather-card" id="moneyWeatherCard" style="display:none;">
+      <div class="weather-icon" id="weatherIcon">☀️</div>
+      <div class="weather-body">
+        <div class="weather-headline" id="weatherHeadline">—</div>
+        <div class="weather-sub" id="weatherSub">—</div>
+      </div>
+    </div>
+
+    <div class="chip-row">
+      <div class="chip"><div class="v mono" id="daysLeft">—</div><div class="l" id="daysLeftLbl">To payday</div></div>
+      <div class="chip"><div class="v mono" id="chipSaved">—</div><div class="l">Saved</div></div>
+      <div class="chip"><div class="v mono" id="alertCount">—</div><div class="l">Alerts</div></div>
+    </div>
+
+    <div class="fx-strip" id="fxStrip" style="display:none;"></div>
+
+    <div class="pay-setup-card" id="paySetupCard" style="display:none;">
+      <div class="ps-title">Set up how you're paid</div>
+      <div class="ps-text">Tell Budget Cockpit whether you earn a monthly salary (on a fixed payday) or wages (no fixed schedule). It then builds your pay cycle, countdown and spending pace around it — until then, no payday is assumed.</div>
+      <button class="btn btn-primary" id="paySetupBtn" type="button">Set up now</button>
+    </div>
+
+    <div class="payday-card">
+      <div class="payday-row">
+        <div class="payday-item">
+          <div class="payday-lbl" id="lastPaydayLbl">Last payday</div>
+          <div class="payday-val" id="lastPaydayVal">—</div>
+        </div>
+        <div class="payday-arrow" id="paydayArrow">→</div>
+        <div class="payday-item" id="nextPaydayItem">
+          <div class="payday-lbl">Next payday</div>
+          <div class="payday-val" id="nextPaydayVal">—</div>
+        </div>
+      </div>
+      <div class="payday-countdown" id="paydayCountdown">—</div>
+    </div>
+
+      <div class="quote-card" id="quoteCard">
+      <div class="quote-mark">"</div>
+      <div class="quote-eyebrow">
+        <span>✦ Money thought for today</span>
+        <button class="quote-refresh" id="refreshQuoteBtn">↻ New</button>
+      </div>
+      <div class="quote-text" id="quoteText">Loading…</div>
+      <div class="quote-author" id="quoteAuthor"></div>
+    </div>
+
+    <div class="badge-row" id="badgeRow" style="display:none;"></div>
+    <div class="bill-reminders" id="billReminders" style="display:none;"></div>
+    <div class="bill-reminders" id="loanDueAlerts" style="display:none;"></div>
+
+    <button class="whatif-btn" id="whatIfBtn">🔮 What if I cut a category?</button>
+
+    <button class="insights-toggle" id="insightsToggle" type="button">
+      <span>✦ Insights <span style="color:var(--muted);font-weight:400;margin-left:4px;">weekday pattern & spending trend</span></span>
+      <span class="insights-chevron" id="insightsChevron">▾</span>
+    </button>
+    <div class="insights-body" id="insightsBody">
+      <div class="mini-card">
+        <div class="mini-card-title">Weekday pattern</div>
+        <canvas id="weekdayCanvas" width="280" height="90"></canvas>
+        <div class="mini-card-note" id="weekdayHighest">—</div>
+      </div>
+
+      <div class="mini-card">
+        <div class="mini-card-title">Spending trend (last cycles)</div>
+        <canvas id="trendCanvas" width="280" height="90"></canvas>
+        <div class="mini-card-note" id="trendNote">—</div>
+      </div>
+    </div>
+
+    <div class="section"><h2>Extra income this cycle</h2><span class="tag" id="extraTag">₦0 added</span></div>
+    <div class="extra-list" id="extraList"></div>
+    <button class="add-extra-btn" id="addExtraBtn">+ Add extra income (bonus, side hustle, gift…)</button>
+
+    <div class="section"><h2>Spending categories</h2><span class="tag" id="catTag">0 tracked</span></div>
+    <div class="cat-list" id="catList"></div>
+
+    <div class="section" id="hhSection" style="display:none;"><h2>Spending by person</h2></div>
+    <div id="householdCard" style="display:none;margin:0 20px 20px;"></div>
+
+    <div class="section"><h2>Recent activity</h2><span class="tag" id="txTag"></span></div>
+    <div class="tx-list" id="txListPreview"></div>
+  </div>
+
+  <!-- ================= SAVINGS ================= -->
+  <div class="view" id="view-finance">
+    <div class="header"><div><div class="eyebrow">Budget Cockpit</div><div class="h1">Finance</div></div></div>
+
+    <div style="margin:0 20px 16px;">
+      <div class="theme-row" style="margin-bottom:0;">
+        <div class="theme-opt" id="financeTabDebt">💳 Debt</div>
+        <div class="theme-opt" id="financeTabSavings">✚ Savings</div>
+        <div class="theme-opt" id="financeTabLoans">🤝 Lent Out</div>
+      </div>
+    </div>
+
+    <!-- ---- Debt panel ---- -->
+    <div id="financePanelDebt">
+      <div class="hist-summary" id="debtSummary" style="margin-bottom:14px;"></div>
+
+      <div class="section" style="margin-top:0;"><h2>Payoff strategy</h2></div>
+      <div style="margin:0 20px 14px;">
+        <div class="theme-row" style="margin-bottom:8px;">
+          <div class="theme-opt" id="stratAvalanche">Avalanche</div>
+          <div class="theme-opt" id="stratSnowball">Snowball</div>
+          <div class="theme-opt" id="stratManual">Manual</div>
+        </div>
+        <p style="font-size:11px;color:var(--muted);line-height:1.5;margin:0;">
+          <b>Avalanche:</b> pay the highest interest-rate debt first — saves the most money overall.
+          <b>Snowball:</b> pay the smallest balance first — quick wins that build momentum.
+          <b>Manual:</b> you choose which debt to focus on.</p>
+      </div>
+
+      <div id="debtFocusCard"></div>
+
+      <div class="section"><h2>All debts</h2><span class="tag" id="debtTag">0 tracked</span></div>
+      <div id="debtList"></div>
+
+      <div style="margin:0 20px 20px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;">
+        <div style="font-size:12px;font-weight:600;margin-bottom:10px;">Add a debt</div>
+        <div class="field">
+          <label>Owed to (creditor)</label>
+          <input type="text" id="newDebtCreditor" placeholder="e.g. Mum, Access Bank, FairMoney">
+          <div class="debt-hint" id="newDebtGroupHint" style="display:none;"></div>
+        </div>
+        <div class="field">
+          <label>Reason</label>
+          <input type="text" id="newDebtReason" placeholder="e.g. School fees loan, car repair">
+        </div>
+        <div class="settings-row">
+          <div class="field">
+            <label>Amount owed ₦</label>
+            <input type="number" id="newDebtAmount" min="0" step="1" placeholder="0">
+          </div>
+          <div class="field">
+            <label>Interest %/yr (optional)</label>
+            <input type="number" id="newDebtInterest" min="0" step="0.1" placeholder="0">
+          </div>
+        </div>
+        <button class="btn btn-primary" id="addDebtBtn">Add debt</button>
+      </div>
+    </div>
+
+    <!-- ---- Savings panel ---- -->
+    <div id="financePanelSavings" style="display:none;">
+      <p style="font-size:12px;color:var(--muted);margin:0 20px 16px;line-height:1.5;">
+        These aren't counted as spending — they're money you're moving toward a goal. Totals below include everything you've ever contributed, not just this cycle.</p>
+      <div id="savingsList"></div>
+    </div>
+
+    <!-- ---- Loans (money lent to others) panel ---- -->
+    <div id="financePanelLoans" style="display:none;">
+      <p style="font-size:12px;color:var(--muted);margin:0 20px 16px;line-height:1.5;">
+        Track money you've lent to friends or family and log it when they pay you back. Repayments show up as extra income, not as spending.</p>
+      <div class="hist-summary" id="loanSummary" style="margin:0 20px 14px;"></div>
+
+      <div class="section" style="margin-top:0;"><h2>All loans</h2><span class="tag" id="loanTag">0 tracked</span></div>
+      <div id="loanList"></div>
+
+      <div style="margin:0 20px 20px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;">
+        <div style="font-size:12px;font-weight:600;margin-bottom:10px;">Add a loan</div>
+        <div class="field">
+          <label>Lent to</label>
+          <input type="text" id="newLoanBorrower" placeholder="e.g. Chinaza, Tunde">
+        </div>
+        <div class="field">
+          <label>Reason</label>
+          <input type="text" id="newLoanReason" placeholder="e.g. Rent shortfall, emergency">
+        </div>
+        <div class="field">
+          <label>Amount lent ₦</label>
+          <input type="number" id="newLoanAmount" min="0" step="1" placeholder="0">
+        </div>
+        <div class="field">
+          <label>Promised repayment date (optional)</label>
+          <input type="date" id="newLoanDue">
+        </div>
+        <button class="btn btn-primary" id="addLoanBtn">Add loan</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= HISTORY ================= -->
+  <div class="view" id="view-history">
+    <div class="header"><div><div class="eyebrow">Budget Cockpit</div><div class="h1">History</div></div></div>
+    <div class="hist-summary" id="histSummary"></div>
+    <div id="histChartWrap"></div>
+    <div class="section"><h2>Past cycles</h2><span class="tag" id="pastCyclesTag"></span></div>
+    <div class="tx-list" id="pastCyclesList" style="margin-bottom:8px;"></div>
+
+    <div class="section"><h2>Year-end review</h2></div>
+    <div style="margin:0 20px 20px;display:flex;gap:8px;align-items:flex-end;">
+      <div class="field" style="margin-bottom:0;flex:1;">
+        <label>Year</label>
+        <select id="yearSelect"></select>
+      </div>
+      <button class="btn btn-teal" id="yearReportBtn" style="width:auto;padding:12px 16px;">Generate</button>
+    </div>
+
+    <div class="section"><h2>All transactions this cycle</h2><span class="tag" id="txTagFull"></span></div>
+    <div style="margin:0 20px 10px;position:relative;">
+      <input type="text" id="txSearchInput" placeholder="Search by description or category…" style="width:100%;box-sizing:border-box;padding:10px 32px 10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--text);font-size:13px;">
+      <button id="txSearchClearBtn" aria-label="Clear search" style="display:none;position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--muted);font-size:14px;cursor:pointer;padding:4px;">✕</button>
+    </div>
+    <div class="tx-list" id="txListFull"></div>
+  </div>
+
+  <!-- ================= GUIDE ================= -->
+  <div class="view" id="view-guide">
+    <div class="header"><div><div class="eyebrow">Budget Cockpit</div><div class="h1">Guide & FAQ</div></div></div>
+    <div style="margin:0 20px 14px;"><button class="btn btn-primary" id="tourReplayGuideBtn" type="button">▶ Take the app tour</button></div>
+
+    <div class="guide-block">
+      <h3>Getting started</h3>
+      <div class="faq-item"><div class="faq-q">How do I get started?</div>
+        <div class="faq-a">Create your account with an email and password (a quick “verify you’re human” check may appear). A short tour then points out the main buttons — you can replay it any time with the button at the top of this Guide tab. After that, open Settings and: pick your currency, choose how you’re paid (salary or wages), enter your income if you want to (it is optional), and set a budget for each category. Without income the balance on the dashboard shows what you have spent as a negative number; it fixes itself once you add income. Until you choose how you’re paid, no payday is assumed — the Dashboard shows a “Set up how you’re paid” card instead of a countdown. Everything else updates automatically as you log expenses. Each new account starts with 17 ready-made categories (including separate Emergency Fund, Savings and Investments pots) you can rename, re-budget, add to or remove.</div></div>
+      <div class="faq-item"><div class="faq-q">What’s the difference between “Salary” and “Wages”?</div>
+        <div class="faq-a"><b>Salary</b> means a fixed payday each month (you choose the day, 1–28). Your cycle runs from one payday to the next, and the Dashboard shows the days left and your safe-to-spend-per-day. <b>Wages</b> means no fixed schedule: your cycle starts when you start it and runs until you end it yourself with “Archive this cycle &amp; start fresh” in Settings. Nothing is archived automatically, and because there’s no end date to measure against, the Dashboard shows “Cycle day” instead of a countdown, pace badge or per-day allowance. You can switch in Settings at any time; switching to Wages starts a new open-ended cycle from today.</div></div>
+      <div class="faq-item"><div class="faq-q">Why does my payday move around? (Salary)</div>
+        <div class="faq-a">Your payday is a fixed day of the month. If it lands on a Saturday or Sunday, the cycle shifts to the Friday before, which is when most salaries are actually paid.</div></div>
+      <div class="faq-item"><div class="faq-q">Which currencies can I use, and what happens if I change mine?</div>
+        <div class="faq-a">Settings → Currency offers about 85 currencies, including Naira, US, Canadian and Australian dollars, pound, euro, rand, cedi and many more across Africa, the Americas, Europe, the Middle East and Asia. Changing it changes the symbol shown on every amount — it does <b>not</b> convert numbers you’ve already entered. In PDF reports, symbols the PDF font can’t draw (such as ₦) are printed as the 3-letter code (NGN) instead.</div></div>
+      <div class="faq-item"><div class="faq-q">Can I use the app on my phone like a normal app?</div>
+        <div class="faq-a">Yes. Open it in your phone’s browser and choose “Add to Home Screen” (or “Install app”). It then opens full-screen like any other app.</div></div>
+    </div>
+
+    <div class="guide-block">
+      <h3>Logging your money</h3>
+      <div class="faq-item"><div class="faq-q">How do I log an expense?</div>
+        <div class="faq-a">Tap the <b>+</b> button, enter the amount, pick a category, and add a note, a payment method and a date if you like. The date defaults to today. Tick “Repeats every cycle” to have it logged again automatically at the start of each new cycle (rent, subscriptions).</div></div>
+      <div class="faq-item"><div class="faq-q">How do I edit or delete an expense I logged wrong?</div>
+        <div class="faq-a">Tap any transaction to edit it — amount, category, method, note and date can all be changed, and Save updates it in place instead of creating a duplicate. On a phone you can also swipe a row left for quick Edit and Delete buttons, and the ✕ button deletes it directly.</div></div>
+      <div class="faq-item"><div class="faq-q">What are payment methods for, and do I have to use them?</div>
+        <div class="faq-a">They’re optional. Tagging an expense as Cash, Card, USSD, Mobile Wallet or Bank Transfer doesn’t change any calculation — it just shows in your transaction list and exports so you can spot patterns such as “I overspend when paying by card”.</div></div>
+      <div class="faq-item"><div class="faq-q">How do I add extra income, including money in another currency?</div>
+        <div class="faq-a">Tap “+ Add extra income”. Pick the currency you actually received it in and the app looks up a live exchange rate (from Frankfurter, a free service that collects rates from central banks and other official sources) and shows a preview like “≈ ₦77,500 at today’s rate” before you save. The original amount, currency, rate and date are kept on the entry, and only the converted home-currency amount counts toward your budget. If the live rate can’t be fetched (no connection, or an unusual currency), enter the amount in your home currency instead.</div></div>
+      <div class="faq-item"><div class="faq-q">What does “Safe to spend per day” mean?</div>
+        <div class="faq-a">It’s (remaining budget) ÷ (days left until payday) — a pace check. Spending at or below it each remaining day lands you within budget by payday; going over on one day just means tighter days ahead, not an emergency. It only applies to Salary; Wages cycles have no end date, so it isn’t shown.</div></div>
+      <div class="faq-item"><div class="faq-q">Why aren’t Savings and Emergency Fund counted as spending?</div>
+        <div class="faq-a">Money you move into savings or investments isn’t an expense — it’s still yours, just set aside. It’s left out of “Spent” and tracked on the Finance → Savings tab, which shows <b>Savings</b> and <b>Investments</b> as two separate cards (each with its own total and goals — choose which a pot counts as with “Counts as” in Settings, or pick the Investments group when adding a category), where it builds toward a goal over time instead of resetting each cycle. When you reach a goal the bar shows 100%+ and it’s marked “Target met”; nothing else changes automatically, so you decide whether to raise the goal or redirect contributions.</div></div>
+      <div class="faq-item"><div class="faq-q">What are the green, amber and red icons on my categories?</div>
+        <div class="faq-a">They show how much of each category’s budget is used: a green tick means on track, amber means you’ve reached the category’s “Alert %” (set per category in Settings), and red means you’ve gone over.</div></div>
+      <div class="faq-item"><div class="faq-q">How do I add or remove a category?</div>
+        <div class="faq-a">In Settings, scroll to “Add a new category”, give it a name and a group (Needs, Wants or Savings). To remove one, tap the 🗑 next to it. If it has spending this cycle you’ll be warned first; the transactions aren’t deleted, they just show as “Uncategorized”.</div></div>
+      <div class="faq-item"><div class="faq-q">How do bills and recurring transactions work?</div>
+        <div class="faq-a">Settings → Bills &amp; subscriptions lets you list a bill with its due day; a reminder banner appears on the Dashboard when one is due within 5 days. Recurring transactions (ticked “Repeats every cycle” when logging) are logged again automatically when a new cycle starts, and you can stop any of them under Settings → Recurring transactions.</div></div>
+      <div class="faq-item"><div class="faq-q">What are the two eye icons, and how safe are they?</div>
+        <div class="faq-a">There are two separate privacy switches. The <b>eye on the income card</b> hides only your <b>income and balance</b> — and it hides them everywhere they appear (the card, Settings, History, reports, extra income, “what-if”), while everything else stays visible. The <b>eye at the top</b> hides <b>every figure</b> in the app, including the amount boxes in Settings and the edit screens (they open blank, and leaving one blank keeps the old value), and it closes reports. Lotus and the sync backup stay closed while either is on, because they contain your income. Hiding is instant; if you’ve set a PIN or fingerprint, <b>showing again asks for it</b> (five wrong PINs sign you out), so someone holding your unlocked phone can’t just tap the eye. Without a PIN or fingerprint the app can’t tell who’s tapping, so set one under Settings → Security.</div>
+    </div>
+    </div>
+
+    <div class="guide-block">
+      <h3>Debts, loans &amp; write-offs</h3>
+      <div class="faq-item"><div class="faq-q">What’s the difference between the Debt tracker and the “Debt repayment” category?</div>
+        <div class="faq-a">The Debt repayment category is a budget line, like Rent or Food — it caps what you plan to spend on debt this cycle. The Debt tracker (Finance tab) is more detailed: it tracks each creditor, how much you owe and what you’ve paid. Every payment you log there also counts toward the Debt repayment category, so the two stay in sync.</div></div>
+      <div class="faq-item"><div class="faq-q">What happens when I add a debt?</div>
+        <div class="faq-a">The app asks what the borrowed money was for: <b>add it to my balance</b> (it’s recorded as income you can spend), <b>I’ve already spent it</b> (recorded as income plus a categorised expense, so the books balance), or <b>just track the debt</b> (no change to your balance — for example if someone else is holding the money).</div></div>
+      <div class="faq-item"><div class="faq-q">I owe the same person more than once (say Grandma) — how should I record it?</div>
+        <div class="faq-a">Add each as its own debt. Debts owed to the same name (capitalisation doesn’t matter) are grouped under one header showing the combined total, amount paid and amount left, while each keeps its own reason and payment history. Typing a name you already owe shows how much you owe them across how many debts. If you’d rather have a single balance, tap “Merge into one debt” on the group: amounts, reasons and every payment are combined and nothing is lost, but you’ll no longer see them split by reason. To correct a wrong amount or reason on one debt, tap its <b>Edit</b> button instead.</div></div>
+      <div class="faq-item"><div class="faq-q">I logged a debt payment twice (or wrongly). How do I fix it?</div>
+        <div class="faq-a">Tap the debt to see its payment history, then tap <b>Edit</b> beside the payment to change its amount or date, or delete it. This works for the current cycle and for archived cycles — for an archived one, that cycle’s totals and the debt’s paid-so-far are corrected too, so your balance stays right.</div></div>
+      <div class="faq-item"><div class="faq-q">What does “Write off” do?</div>
+        <div class="faq-a">A write-off cancels some or all of what’s left without any money moving. Use it on a debt when the person you owe forgives or cancels it; use it on a loan when you choose to forgive what someone owes you or accept you won’t get it back. The cancelled part stops counting as owed, your balance and spending don’t change, nothing is added to your income, and the payments already logged stay on record. The card shows the written-off amount and date. You can write off part of the balance, and “Undo write-off” puts it back.</div></div>
+      <div class="faq-item"><div class="faq-q">How do loans I’ve made to other people (Lent Out) work?</div>
+        <div class="faq-a">Add a loan with who it’s to, why and how much. When they repay, tap “Log repayment”: getting your own money back isn’t income, so only anything repaid <i>beyond</i> the amount lent is added to your extra income. Tap a loan to see its repayment history. The ✎ button records a repayment you received in an earlier cycle that was never logged.</div></div>
+      <div class="faq-item"><div class="faq-q">How does the Avalanche / Snowball / Manual strategy work?</div>
+        <div class="faq-a">Avalanche highlights the debt with the highest interest rate as your focus — it saves the most money. Snowball highlights the smallest remaining balance — it clears debts fastest and builds momentum. Manual lets you pick any debt yourself. Switching strategy doesn’t change your debts, only which one is suggested as your current focus. Settled and written-off debts are never suggested.</div></div>
+    </div>
+
+    <div class="guide-block">
+      <h3>Cycles, reports &amp; history</h3>
+      <div class="faq-item"><div class="faq-q">What happens when a cycle is archived?</div>
+        <div class="faq-a">The cycle’s totals are saved to History, savings contributions fold into your lifetime savings totals, debt payments fold into each debt’s paid-so-far, a report is generated, and transactions and extra income reset for the next cycle. Category budgets and goals stay the same. You can archive manually from Settings at any time (“Archive this cycle &amp; start fresh”).</div></div>
+      <div class="faq-item"><div class="faq-q">Does the cycle roll over by itself?</div>
+        <div class="faq-a">For Salary accounts, yes: the app archives your cycle automatically at the end of payday (shortly before midnight, Nigeria time) and, if an email address is set in Settings and email delivery is set up for the app, sends you that cycle’s report. If the app was closed, opening it after payday starts the new cycle automatically, usually within a few minutes. Wages accounts never archive automatically.</div></div>
+      <div class="faq-item"><div class="faq-q">Can I see a report for a cycle I already archived?</div>
+        <div class="faq-a">Yes. Go to History, scroll to “Past cycles” and tap View. It rebuilds the full report from the snapshot saved at archive time. Cycles archived before reports were saved show totals only. Next to each cycle there’s also a Restore button that brings an archived cycle back as the current one (needs an internet connection).</div></div>
+      <div class="faq-item"><div class="faq-q">What’s the Year-end review?</div>
+        <div class="faq-a">Also in History: pick a year and it combines every cycle archived that year into one report — total income, spending and savings, a category breakdown, and spend per cycle.</div></div>
+      <div class="faq-item"><div class="faq-q">Can I download, copy or email my report?</div>
+        <div class="faq-a">Yes. “Copy text” copies a plain-text version. “Download PDF” makes a formatted statement with charts. “Email it” opens your email app with the report pre-filled for the address set in Settings; you still have to press send yourself. Reports include a record-integrity section showing when entries were created and edited (edited ones are marked *), and a note that they are not official bank records.</div></div>
+      <div class="faq-item"><div class="faq-q">What’s the shareable link?</div>
+        <div class="faq-a">On a report, “Create shareable link (7 days)” makes a read-only snapshot anyone can open without logging in. It expires after 7 days, and you can revoke it sooner under Settings → Shared links.</div></div>
+      <div class="faq-item"><div class="faq-q">Can I share my budget with someone else, or let them use the app?</div>
+        <div class="faq-a">Anyone can use the app: send them the app’s link and they create their own account, with their own private budget. There is no shared or joint budget — each account is separate. To let someone see your figures without an account, send a shareable report link.</div></div>
+    </div>
+
+    <div class="guide-block">
+      <h3>Signing in, security &amp; privacy</h3>
+      <div class="faq-item"><div class="faq-q">Is my data private?</div>
+        <div class="faq-a">Your budget belongs to your account. Row-level security in the database keeps other people who sign up from ever seeing your categories, transactions, debts or loans, and regular use of the app never exposes one person’s data to another. As with any hosted service, the app’s operator administers the database and retains standard administrative access to the infrastructure it runs on.</div></div>
+      <div class="faq-item"><div class="faq-q">How can I sign in?</div>
+        <div class="faq-a">With your email and password, or — once you’ve set them up in Settings → Security — a 6-digit PIN or your phone’s fingerprint / face unlock. On the login screen, switch between Password, PIN and Biometrics with the tabs. Your password always works. PIN and biometrics are conveniences for getting back in on a device that already has your login saved, so a brand-new device always needs your password first.</div></div>
+      <div class="faq-item"><div class="faq-q">How do I delete my account and my data?</div>
+        <div class="faq-a">Go to Settings → Your data → Delete my account. You confirm with your password and by typing DELETE. Everything in the account is erased from the server straight away: expenses, budgets, history, debts, loans, household, reminders and share links. It cannot be undone. If you can no longer sign in, follow the steps on the delete-account page linked from the privacy policy.</div></div>
+      <div class="faq-item"><div class="faq-q">What’s the difference between “Lock app now” and “Sign out completely”?</div>
+        <div class="faq-a">If you’ve set a PIN or biometrics, “Lock app now” hides your data and keeps your login on this device so you can get back in with any method. “Sign out completely” ends your login on the server and clears it from the device — use it before handing your phone to someone or on a device you don’t trust. Without a PIN or biometrics, “Lock app now” signs you out. The app also locks itself after 5 minutes of inactivity.</div></div>
+      <div class="faq-item"><div class="faq-q">What if I forget my PIN or password?</div>
+        <div class="faq-a">After 5 wrong PINs, or if you tap “Forgot?” on the PIN screen, the saved login is discarded and you sign in with your password; then set a new PIN in Settings (you don’t need the old one). For a forgotten password, tap “Forgot password?” on the login screen and follow the link emailed to you.</div></div>
+      <div class="faq-item"><div class="faq-q">Why do I sometimes see a verification check when signing in?</div>
+        <div class="faq-a">It’s a quick bot check (Cloudflare Turnstile) on sign-in, sign-up and password reset that keeps automated scripts out. If it never appears, an ad or content blocker may be hiding it — allow challenges.cloudflare.com or try another browser.</div></div>
+      <div class="faq-item"><div class="faq-q">How do daily reminders work?</div>
+        <div class="faq-a">Settings → Daily reminder: switch it on, pick a time (24-hour, e.g. 20:30) and choose push notification, email or both. If you haven’t logged anything that day by then, you get a nudge to log an expense; on days you’ve already logged something, no reminder is sent. Push needs your permission on each device (tap “Allow push notifications”); email goes to the report email address saved in Settings (so make sure one is set). Not getting them? Tap <b>Send me a test now</b> in the same section — it sends a real test and the checklist below it shows exactly what’s missing (a push permission, a saved email, or something on the app’s server). On an iPhone, push only works once the app is added to your Home Screen.</div></div>
+    </div>
+
+    <div class="guide-block">
+      <h3>Household budgeting</h3>
+      <div class="faq-item"><div class="faq-q">Can I use this for my whole household?</div>
+        <div class="faq-a">Yes. Settings → Household budget → switch it on, then add the people you share money with (a spouse, children, a relative). When you log an expense you pick who spent it, and the Dashboard shows spending by person. It is one budget on one login: the people you add are labels, not separate accounts.</div></div>
+      <div class="faq-item"><div class="faq-q">What are household categories?</div>
+        <div class="faq-a">“Add household categories” adds common ones that are missing, such as school fees, generator fuel, domestic help, church giving, children’s needs and home repairs. Nothing you already have is changed or duplicated, and you can rename or delete any of them.</div></div>
+      <div class="faq-item"><div class="faq-q">Do other people log in to my budget?</div>
+        <div class="faq-a">Not yet. Everyone shares the one login, or you log their spending for them. Each person who wants a private budget of their own can create their own free account, because every account is separate.</div></div>
+      <div class="faq-item"><div class="faq-q">What happens to old expenses, and if I remove someone?</div>
+        <div class="faq-a">Expenses logged before you turned this on stay as “Not assigned”. Open one and tap Edit to give it a person. Removing a person hides them from new entries but keeps their past spending in your reports. Turning the switch off keeps everything, so you can turn it back on later.</div></div>
+    </div>
+
+    <div class="guide-block">
+      <h3>Sync, offline &amp; multiple devices</h3>
+      <div class="faq-item"><div class="faq-q">Does the app work offline?</div>
+        <div class="faq-a">Yes. Once loaded, you can keep logging, editing and deleting expenses with no connection. Changes are saved on your device and sync automatically when you’re back online — the sync indicator at the top shows whether everything has been saved. Debts and loans you add offline are also sent once you’re connected. A few things do need a connection: your first sign-in on a device, live exchange rates, the AI assistant, creating shareable links, restoring an archived cycle and password reset.</div></div>
+      <div class="faq-item"><div class="faq-q">Can I use the same account on two devices?</div>
+        <div class="faq-a">Yes — sign in on each. If you changed things on two devices before they synced, the app keeps the new entries from both. In the rare case it has to choose between two edits to the very same entry, a copy of this device’s version is saved under Settings → Sync so you can download it and re-enter anything that looks off.</div></div>
+      <div class="faq-item"><div class="faq-q">Light or dark mode — does it matter?</div>
+        <div class="faq-a">Purely a preference, from the header icon or Settings. Nothing about calculations or storage changes.</div></div>
+    </div>
+
+    <div class="guide-block">
+      <h3>Lotus, quotes &amp; notes</h3>
+      <div class="faq-item"><div class="faq-q">What is Lotus, and what can I ask it?</div>
+        <div class="faq-a">Lotus is the budgeting assistant built into Budget Cockpit. Tap the <b>Lotus</b> button at the bottom left and ask in plain language — for example “Where can I cut back?”, “Am I overspending on food?”, “How am I doing this cycle?” or “What’s the fastest way to pay off my debt?”. Lotus answers using your own numbers, and one-tap suggestions appear when you open it. It’s a good place to ask about where your money is going, whether you’re on track, and ideas for saving or clearing debt.</div></div>
+      <div class="faq-item"><div class="faq-q">What can Lotus see, and what are its limits?</div>
+        <div class="faq-a">Lotus reads a summary of your <b>current cycle</b> — income, spending by category, budgets, savings, the balance left, your debts (who you owe, how much and the interest) and the names of your bills — plus the last few messages of your chat so it can follow up. It does <b>not</b> see individual transactions, past cycles or loans you’ve made, and it can’t change anything: it can’t log expenses, edit budgets or move money. Its answers are guidance, not licensed financial advice, and replies are kept short. Lotus needs an internet connection, and it runs on a shared free allowance — if many people are using it you may see a message that it has reached its limit; just try again a little later.</div></div>
+      <div class="faq-item"><div class="faq-q">Where are my chats with Lotus stored, and is my data used for training?</div>
+        <div class="faq-a">Your question and that cycle summary are sent through the app’s server to an AI service (currently Groq) to produce the answer. Your conversation is saved in your account so it’s there next time; the 🗑 icon inside Lotus clears it. Whether the AI provider trains on requests depends on that provider’s own policy.</div></div>
+      <div class="faq-item"><div class="faq-q">What’s the “Money thought for today” card?</div>
+        <div class="faq-a">A short quote about money, success or good habits near the top of the Dashboard, there to keep you motivated. Tap <b>↻ New</b> for another one. It’s just for inspiration and doesn’t change any of your numbers.</div></div>
+      <div class="faq-item"><div class="faq-q">What’s the “My own notes” box for?</div>
+        <div class="faq-a">A private scratchpad at the bottom of this tab for your own budgeting rules and reminders. It saves automatically a second after you stop typing.</div></div>
+    </div>
+
+    <div class="guide-block">
+      <h3>Troubleshooting</h3>
+      <div class="faq-item"><div class="faq-q">I got “could not save” or “unable to reach” — what do I do?</div>
+        <div class="faq-a">Check your internet connection. Your changes are kept on the device and retried automatically, so nothing is lost; the sync indicator turns back to saved once they get through. If it persists, refresh the page, or sign out and back in. Settings → About shows the app version, which helps if you need to report a problem.</div></div>
+      <div class="faq-item"><div class="faq-q">I updated or fixed something but the app looks the same.</div>
+        <div class="faq-a">Close the app completely and reopen it (or refresh the page) so your device picks up the latest version. The version number is in Settings → About.</div></div>
+      <div class="faq-item"><div class="faq-q">Payday has passed but my Dashboard still shows the old cycle.</div>
+        <div class="faq-a">Salary accounts roll over automatically — opening the app after payday should start the new cycle within a few minutes. If it doesn’t, check you’re online and refresh. Wages accounts never roll over automatically: use “Archive this cycle &amp; start fresh” in Settings.</div></div>
+      <div class="faq-item" data-admin-only style="display:none;"><div class="faq-q">I run my own copy of the app. What must be set up?</div>
+        <div class="faq-a">Put your Supabase project URL and anon key in <code>config.js</code> (Project Settings → API); a console error naming a domain like “your-project-ref.supabase.co” means it still holds a placeholder. Deploy the <code>api</code> Edge Function with JWT verification off (the function checks sign-in itself), run <code>schema.sql</code>, and register the scheduled jobs in <code>cron.sql</code>. Email reports, reminders and push each need their own keys set as secrets on the function.</div></div>
+    </div>
+
+    <div class="guide-block">
+      <h3>General budgeting benchmarks</h3>
+      <p style="font-size:11.5px;color:var(--muted);margin:-2px 0 10px;line-height:1.5;">
+        Widely-cited starting points — not rules. Adjust to your situation, especially if your income is contract-based or irregular.</p>
+      <table class="pct-table">
+        <tr><th>Approach</th><th>Needs</th><th>Wants</th><th>Savings</th></tr>
+        <tr><td>Standard (50/30/20)</td><td class="num">50%</td><td class="num">30%</td><td class="num">20%</td></tr>
+        <tr><td>Mildly aggressive</td><td class="num">~60%</td><td class="num">~10%</td><td class="num">~30%</td></tr>
+        <tr><td>Aggressive saver</td><td class="num">~55%</td><td class="num">~5%</td><td class="num">~40%</td></tr>
+        <tr><td>Debt payoff focus</td><td class="num">~50%</td><td class="num">~10%</td><td class="num">~40%*</td></tr>
+      </table>
+      <p style="font-size:10.5px;color:var(--muted-2);margin:8px 0 14px;">*mostly directed at extra debt repayment rather than savings.</p>
+      <table class="pct-table">
+        <tr><th>Category</th><th>Commonly cited range</th></tr>
+        <tr><td>Rent / housing</td><td class="num">25–35% of income</td></tr>
+        <tr><td>Transport</td><td class="num">10–15%</td></tr>
+        <tr><td>Food / groceries</td><td class="num">10–15%</td></tr>
+        <tr><td>Utilities</td><td class="num">5–10%</td></tr>
+        <tr><td>Debt repayment</td><td class="num">under 20%</td></tr>
+        <tr><td>Emergency fund target</td><td class="num">3–6 months of essential costs</td></tr>
+        <tr><td>Discretionary / wants</td><td class="num">10–20%</td></tr>
+        <tr><td>Savings / investing</td><td class="num">20%+ if possible</td></tr>
+      </table>
+    </div>
+
+    <div class="guide-block">
+      <h3>Notes & strategy</h3>
+      <div class="note-item"><div class="note-num">01</div><div class="note-text"><b>Treat irregular or contract income as temporary.</b> If your pay isn't guaranteed long-term, avoid raising fixed costs to match a good month.</div></div>
+      <div class="note-item"><div class="note-num">02</div><div class="note-text"><b>Build the emergency fund before extra investing.</b> Aim for 3–6 months of essential costs somewhere liquid.</div></div>
+      <div class="note-item"><div class="note-num">03</div><div class="note-text"><b>Log expenses the same day.</b> The categories and pace alerts only stay useful if the data is current.</div></div>
+      <div class="note-item"><div class="note-num">04</div><div class="note-text"><b>If your total budgeted exceeds your income, something has to give.</b> Check the "Total budgeted" line on Dashboard and Settings — it turns red the moment your categories add up to more than you earn.</div></div>
+      <div class="note-item"><div class="note-num">05</div><div class="note-text"><b>Review every payday.</b> Archive the cycle, read the generated report, and adjust next cycle's budgets based on what actually happened.</div></div>
+    </div>
+
+    <div class="guide-block">
+      <h3>My own notes</h3>
+      <p style="font-size:11px;color:var(--muted);margin:-2px 0 10px;line-height:1.5;">
+        A private scratchpad — jot down your own budgeting rules, reminders, or things to try next cycle. Saved automatically.</p>
+      <div class="field" style="margin-bottom:8px;">
+        <textarea id="personalNotesInput" rows="8" placeholder="e.g. Cut back on weekend transport spend. Move ₦5,000 extra to Emergency Fund once debt is cleared. Try meal-prepping Sundays to reduce food spend..."></textarea>
+      </div>
+      <div id="notesSavedLabel" style="font-size:10.5px;color:var(--muted-2);"></div>
+    </div>
+  </div>
+
+  <!-- ================= SETTINGS ================= -->
+  <div class="view" id="view-settings">
+    <div class="header"><div><div class="eyebrow">Budget Cockpit</div><div class="h1">Settings</div></div></div>
+
+    <div class="section" style="margin-top:6px;"><h2>Appearance</h2></div>
+    <div style="margin:0 20px;">
+      <div class="theme-row">
+        <div class="theme-opt" id="themeOptDark">🌙 Dark</div>
+        <div class="theme-opt" id="themeOptLight">☀️ Light</div>
+      </div>
+    </div>
+
+    <div class="section"><h2>Income & pay cycle</h2></div>
+    <div style="margin:0 20px;">
+      <div class="field">
+        <label>Currency</label>
+        <select id="currencySelect"></select>
+      </div>
+      <div class="field">
+        <div class="current" id="incomeCurrentDisplay">Current: ₦0</div>
+        <label>Update base income</label>
+        <input type="number" id="incomeInput" class="amt-input" inputmode="decimal" min="0" step="1" placeholder="Enter new amount">
+      </div>
+      <div class="field">
+        <label>How are you paid?</label>
+        <select id="payTypeSelect">
+          <option value="salary">Salary — a fixed date every month</option>
+          <option value="wages">Wages — no fixed schedule</option>
+        </select>
+      </div>
+      <div class="field" id="paydayField">
+        <label>Payday (day of month)</label>
+        <input type="number" id="paydayInput" min="1" max="28" step="1" placeholder="25">
+      </div>
+      <p id="paydayHint" style="font-size:11px;color:var(--muted);margin:-8px 0 14px;line-height:1.5;">
+        If your payday lands on a Saturday or Sunday, it's automatically treated as the Friday before — same as most salary payments.</p>
+      <p id="payChoiceHint" style="font-size:11px;color:var(--muted);margin:-8px 0 14px;line-height:1.5;display:none;">
+        Choose how you're paid to start your pay cycle. Until you do, Budget Cockpit doesn't assume a payday.</p>
+      <p id="wagesHint" style="font-size:11px;color:var(--muted);margin:-8px 0 14px;line-height:1.5;display:none;">
+        Your cycle runs until you end it yourself — use "Archive this cycle & start fresh" below whenever you're ready to start a new one. Nothing archives automatically.</p>
+      <div class="field">
+        <div class="current" id="cycleCurrentDisplay">Current cycle: —</div>
+      </div>
+      <div class="field">
+        <div class="current" id="emailCurrentDisplay">Current: not set</div>
+        <label>Update report email</label>
+        <input type="email" id="emailInput" placeholder="you@example.com">
+      </div>
+      <button class="btn btn-primary" id="saveIncomeBtn">Save</button>
+    </div>
+
+    <div class="section"><h2>Category budgets</h2></div>
+    <div class="budget-total-line" id="budgetTotalLine">
+      <span>Total budgeted (Needs + Wants)</span><span class="v" id="budgetTotalVal">₦0</span>
+    </div>
+    <p style="font-size:11px;color:var(--muted);margin:-4px 20px 10px;line-height:1.5;">All budgets start at ₦0 — set your own figures. See the Guide tab for typical percentage ranges.</p>
+    <div id="settingsCatList" style="margin:0 20px;"></div>
+
+    <div style="margin:0 20px 20px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;">
+      <div style="font-size:12px;font-weight:600;margin-bottom:10px;">Add a new category</div>
+      <div class="settings-row" style="margin-bottom:10px;">
+        <div class="field" style="margin-bottom:0;flex:2;">
+          <label>Name</label>
+          <input type="text" id="newCatName" placeholder="e.g. Pet care">
+        </div>
+        <div class="field" style="margin-bottom:0;flex:1;">
+          <label>Group</label>
+          <select id="newCatGroup">
+            <option value="Needs">Needs</option>
+            <option value="Wants" selected>Wants</option>
+            <option value="Savings">Savings</option>
+            <option value="Investments">Investments</option>
+          </select>
+        </div>
+      </div>
+      <button class="btn btn-primary" id="addCatBtn">Add category</button>
+    </div>
+
+    <button class="btn btn-danger" id="resetBudgetsBtn" style="margin:0 20px 20px;width:calc(100% - 40px);">Reset all budgets to ₦0</button>
+
+    <div class="section"><h2>Monthly report</h2></div>
+    <div style="margin:0 20px 20px;">
+      <p style="font-size:12px;color:var(--muted);line-height:1.5;">
+        Generates a summary with charts — spending breakdown, daily spend pattern, savings rate, and suggestions.
+      </p>
+      <button class="btn btn-teal" id="reportBtn">Generate report now</button>
+    </div>
+
+    <div class="section"><h2>Bills & subscriptions</h2><span class="tag" id="billsTag"></span></div>
+    <p style="font-size:11px;color:var(--muted);margin:-4px 20px 10px;line-height:1.5;">Get a reminder banner on Dashboard when a bill is due within 5 days.</p>
+    <div id="billsList" style="margin:0 20px;"></div>
+    <div style="margin:0 20px 20px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;">
+      <div style="font-size:12px;font-weight:600;margin-bottom:10px;">Add a bill</div>
+      <div class="field">
+        <label>Name</label>
+        <input type="text" id="newBillName" placeholder="e.g. Netflix, Rent, School fees">
+      </div>
+      <div class="settings-row">
+        <div class="field">
+          <label>Amount</label>
+          <input type="number" id="newBillAmount" min="0" step="1" placeholder="0">
+        </div>
+        <div class="field">
+          <label>Due day of month</label>
+          <input type="number" id="newBillDueDay" min="1" max="28" step="1" placeholder="1">
+        </div>
+      </div>
+      <button class="btn btn-primary" id="addBillBtn">Add bill</button>
+    </div>
+
+    <div class="section"><h2>Recurring transactions</h2><span class="tag" id="recurTag"></span></div>
+    <p style="font-size:11px;color:var(--muted);margin:-4px 20px 10px;line-height:1.5;">Auto-logged again the moment a new cycle starts. Set one up by checking "Repeats every cycle" when logging or editing an expense.</p>
+    <div id="recurringList" style="margin:0 20px 20px;"></div>
+
+    <div class="section"><h2>Pay-cycle rollover</h2></div>
+    <div style="margin:0 20px 20px;">
+      <p style="font-size:12px;color:var(--muted);line-height:1.5;">
+        Archiving saves this cycle to History, folds savings contributions into your lifetime totals, generates a report,
+        and clears transactions + extra income. Category budgets and goals stay the same.
+      </p>
+      <button class="btn btn-danger" id="archiveBtn">Archive this cycle & start fresh</button>
+    </div>
+
+    <div class="section"><h2>Shared links</h2><span class="tag" id="sharesTag"></span></div>
+    <p style="font-size:11px;color:var(--muted);margin:-4px 20px 10px;line-height:1.5;">Active read-only report links you've created. Anyone with one of these can view that report snapshot without logging in.</p>
+    <div id="sharesList" style="margin:0 20px 20px;"></div>
+
+    <div class="section"><h2>Security</h2></div>
+    <div style="margin:0 20px 20px;">
+      <p style="font-size:12px;color:var(--muted);line-height:1.5;">
+        You can sign in with your password, a 6-digit PIN, or your fingerprint / face — whichever you prefer. Set up a PIN or biometrics below
+        and "Lock app now" will keep your login safe on this device so you can get back in with any method. Use "Sign out completely"
+        before handing your phone to someone else, or on a device you don't trust.
+      </p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;"><button class="btn btn-ghost" id="lockNowBtn">Lock app now</button><button class="btn btn-ghost" id="signOutFullBtn" style="color:var(--red);">Sign out completely</button></div>
+
+      <p style="font-size:12px;color:var(--muted);line-height:1.5;margin-top:16px;">
+        Set a 6-digit PIN for a quick unlock. It stays on this device only. After 5 wrong PIN attempts the saved login is discarded and you
+        must use your password.
+      </p>
+      <div id="pinStatusRow" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <button class="btn btn-ghost" id="pinSetupBtn">Set up a PIN</button>
+        <button class="btn btn-ghost" id="pinRemoveBtn" style="display:none;color:var(--red);">Remove PIN</button>
+        <span id="pinStatusText" style="font-size:11px;color:var(--muted);"></span>
+      </div>
+      <p style="font-size:12px;color:var(--muted);line-height:1.5;margin-top:16px;">
+        Biometrics use your phone's fingerprint or face unlock. It's a convenience lock on this device, and your password always still works.
+      </p>
+      <div id="bioStatusRow" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <button class="btn btn-ghost" id="bioSetupBtn">Enable biometrics</button>
+        <button class="btn btn-ghost" id="bioRemoveBtn" style="display:none;color:var(--red);">Remove biometrics</button>
+        <span id="bioStatusText" style="font-size:11px;color:var(--muted);"></span>
+      </div>
+    </div>
+
+    <div class="section"><h2>Sync</h2></div>
+    <div id="syncBackupRow" style="margin:0 20px 20px;display:none;">
+      <p style="font-size:12px;color:var(--muted);line-height:1.5;margin:0 0 10px;">
+        A sync conflict with another device happened on <span id="syncBackupDate"></span>. Most changes were recovered automatically —
+        this is a safety copy of exactly what this device had right before, in case anything still looks off.
+      </p>
+      <button class="btn btn-ghost" id="syncBackupDownloadBtn">Download backup (.json)</button>
+      <button class="btn btn-ghost" id="syncBackupDismissBtn" style="color:var(--muted);">Dismiss</button>
+    </div>
+
+    <div id="householdSettingsCard">
+    <div class="section"><h2>Household budget</h2></div>
+    <div style="margin:0 20px 20px;">
+      <p class="hh-note" style="margin:0 0 12px;font-size:12px;">Budgeting for a home, not just yourself? Switch this on to add the people you share money with, see who spent what, and get household categories like school fees and generator fuel. It is still one budget on one login. People you add are labels, not accounts.</p>
+      <label style="display:flex;align-items:center;gap:10px;font-size:14px;margin:0 0 12px;cursor:pointer;"><input type="checkbox" id="hhEnable" style="width:auto;margin:0;"> Use Budget Cockpit as a household budget</label>
+      <div id="hhPanel" style="display:none;">
+        <div class="field"><label>Household name</label><input type="text" id="hhName" maxlength="60" placeholder="e.g. The Adeyemi home"></div>
+        <label style="font-size:12px;color:var(--muted);display:block;margin:4px 0 8px;">People in this household</label>
+        <div id="hhMemberList"></div>
+        <div style="display:flex;gap:8px;margin:6px 0 12px;"><input type="text" id="hhNewMember" maxlength="40" placeholder="Add a person, e.g. Tola" style="flex:1;margin:0;"><button class="btn btn-ghost" id="hhAddMember" type="button" style="width:auto;margin:0;">Add</button></div>
+        <button class="btn btn-ghost" id="hhPresetBtn" type="button">Add household categories</button>
+        <p class="hh-note" id="hhSyncNote"></p>
+      </div>
+    </div>
+    </div>
+
+    <div class="section"><h2>Daily reminder</h2></div>
+    <div style="margin:0 20px 20px;">
+      <p style="font-size:12px;color:var(--muted);line-height:1.5;margin:0 0 14px;">
+        Get a nudge if you haven't logged anything by a time you choose — only on days you haven't already logged an expense.
+      </p>
+      <div class="field">
+        <label><input type="checkbox" id="reminderEnabledCheck" style="width:auto;margin-right:8px;vertical-align:middle;">Remind me</label>
+      </div>
+      <div id="reminderOptions" style="display:none;">
+        <div class="field">
+          <label>Remind me at (24-hour time)</label>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <select id="reminderHourSel" aria-label="Hour (00–23)"></select>
+            <span style="font-weight:700;">:</span>
+            <select id="reminderMinSel" aria-label="Minute"></select>
+          </div>
+          <p style="font-size:11px;color:var(--muted);margin:6px 0 0;line-height:1.5;">e.g. 20:30 is 8:30 pm. Sent within about 10 minutes of this time.</p>
+        </div>
+        <div class="field">
+          <label>How?</label>
+          <label style="display:block;font-size:13px;margin:4px 0;"><input type="checkbox" id="reminderChanPush" style="width:auto;margin-right:8px;vertical-align:middle;">Push notification (pop-up / banner)</label>
+          <label style="display:block;font-size:13px;margin:4px 0;"><input type="checkbox" id="reminderChanEmail" style="width:auto;margin-right:8px;vertical-align:middle;">Email</label>
+        </div>
+        <div id="reminderPushRow" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+          <button class="btn btn-ghost" id="reminderPushEnableBtn">Allow push notifications</button>
+          <span id="reminderPushStatus" style="font-size:11px;color:var(--muted);"></span>
+        </div>
+      </div>
+      <button class="btn btn-primary" id="reminderSaveBtn" style="margin-top:4px;">Save reminder settings</button>
+      <button class="btn btn-ghost" id="reminderTestBtn" type="button" data-admin-only style="margin-top:8px;display:none;">Send me a test now</button>
+      <div id="reminderTestResult" data-admin-only style="font-size:12px;line-height:1.55;margin-top:8px;display:none;"></div>
+      <div id="reminderDiag" class="diag-box" aria-live="polite"></div>
+    </div>
+
+    <div class="section"><h2>Privacy</h2></div>
+    <div style="margin:0 20px 20px;">
+      <p style="font-size:12px;color:var(--muted);line-height:1.6;">
+        Your budget is private to your account. Row-level security in the database keeps every other person who signs up from ever seeing your categories, transactions, debts, or loans — regular use of the app never exposes one person's data to another, even by accident.
+        As with any hosted service, the underlying database is administered by the app's operator, who retains standard administrative access to the infrastructure it runs on (the same way any app's operator technically can, whether or not they ever do). This isn't a bank or a regulated custodian — treat it as a personal budgeting tool, not a place to store anything you wouldn't want on a personal spreadsheet.
+      </p>
+    </div>
+
+    <div class="section"><h2>Your data</h2></div>
+    <div style="margin:0 20px 20px;">
+      <p style="font-size:12px;color:var(--muted);line-height:1.5;">
+        Your budget lives in your own private account. You can delete the account and everything in it at any time.
+        Read how your data is handled in the <a href="privacy.html" target="_blank" rel="noopener" style="color:var(--gold);">privacy policy</a>.
+      </p>
+      <button class="btn btn-ghost" id="deleteAccountBtn" type="button" style="color:var(--red);">Delete my account</button>
+    </div>
+
+    <div class="section"><h2>About</h2></div>
+    <div style="margin:0 20px 30px;">
+      <button class="btn btn-ghost" id="tourReplaySettingsBtn" type="button" style="margin-bottom:12px;">▶ Take the app tour again</button>
+      <p style="font-size:11px;color:var(--muted);">Budget Cockpit v<span id="appVersionText"></span></p>
+    </div>
+  </div>
+
+<div class="sheet-overlay" id="pinSetupOverlay" style="display:none;">
+  <div class="sheet" id="pinSetupSheet">
+    <div class="sheet-handle"></div>
+    <h3 id="pinSetupTitle">Set a 6-digit PIN</h3>
+    <p style="font-size:12px;color:var(--muted);margin:-6px 0 14px;" id="pinSetupSub">Choose a PIN you'll remember — this isn't sent anywhere, it only unlocks this device.</p>
+    <div class="pin-dots" id="pinSetupDots">
+      <span class="pin-dot"></span><span class="pin-dot"></span><span class="pin-dot"></span>
+      <span class="pin-dot"></span><span class="pin-dot"></span><span class="pin-dot"></span>
+    </div>
+    <div class="pin-error" id="pinSetupError"></div>
+    <div class="pin-keypad" id="pinSetupKeypad">
+      <button data-key="1">1</button><button data-key="2">2</button><button data-key="3">3</button>
+      <button data-key="4">4</button><button data-key="5">5</button><button data-key="6">6</button>
+      <button data-key="7">7</button><button data-key="8">8</button><button data-key="9">9</button>
+      <button class="pin-key-ghost" data-key="cancel">Cancel</button><button data-key="0">0</button><button data-key="back">⌫</button>
+    </div>
+  </div>
+</div>
+
+<div class="pin-lock-screen" id="pinLockScreen" style="display:none;">
+  <div class="pin-lock-box">
+    <div class="lock-icon">🔒</div>
+    <div class="lock-title">Welcome back</div>
+    <p class="lock-sub">Enter your PIN</p>
+    <div class="pin-dots" id="pinUnlockDots">
+      <span class="pin-dot"></span><span class="pin-dot"></span><span class="pin-dot"></span>
+      <span class="pin-dot"></span><span class="pin-dot"></span><span class="pin-dot"></span>
+    </div>
+    <div class="pin-error" id="pinUnlockError"></div>
+    <div class="pin-keypad" id="pinUnlockKeypad">
+      <button data-key="1">1</button><button data-key="2">2</button><button data-key="3">3</button>
+      <button data-key="4">4</button><button data-key="5">5</button><button data-key="6">6</button>
+      <button data-key="7">7</button><button data-key="8">8</button><button data-key="9">9</button>
+      <button class="pin-key-ghost" id="pinForgotBtn" data-key="forgot">Forgot?</button><button data-key="0">0</button><button data-key="back">⌫</button>
+    </div>
+  </div>
+</div>
+
+</div>
+
+<button class="fab" id="fabAdd" aria-label="Log an expense">+</button>
+<div class="lotus-hint" id="lotusHint" style="display:none;" role="status">
+  <span>Hi, I'm <b>Lotus</b> — ask me anything about your money.</span>
+  <button type="button" id="lotusHintClose" aria-label="Dismiss">✕</button>
+</div>
+<button class="ai-fab ai-fab-new" id="askAiFab" aria-label="Ask Lotus, your budgeting assistant">
+  <svg class="ai-fab-icon" viewBox="0 0 32 32" aria-hidden="true"><use href="#lotusSym"/></svg>
+  <span class="ai-fab-label">Lotus</span>
+</button>
+
+<div class="nav">
+  <div class="nav-inner">
+    <button class="nav-btn active" data-view="dashboard"><span class="ic">◎</span>Dashboard</button>
+    <button class="nav-btn" data-view="finance"><span class="ic">💰</span>Finance</button>
+    <button class="nav-btn" data-view="history"><span class="ic">▤</span>History</button>
+    <button class="nav-btn" data-view="guide"><span class="ic">?</span>Guide</button>
+    <button class="nav-btn" data-view="settings"><span class="ic">⚙</span>Settings</button>
+  </div>
+</div>
+
+<!-- Add transaction sheet -->
+<div class="overlay" id="overlay"></div>
+<div class="sheet" id="addSheet">
+  <div class="sheet-handle"></div>
+  <div style="display:flex;justify-content:space-between;align-items:center;">
+    <h3 id="addSheetTitle" style="margin:0;">Log an expense</h3>
+    <button class="voice-btn" id="voiceLogBtn" title="Speak your expense" aria-label="Speak your expense">🎙️</button>
+  </div>
+  <div class="voice-status" id="voiceStatus" style="display:none;"></div>
+  <div class="field">
+    <label>Amount (₦)</label>
+    <input type="number" id="txAmount" class="amt-input" inputmode="decimal" placeholder="0" min="0" step="1">
+  </div>
+  <div class="field">
+    <label>Category</label>
+    <select id="txCategory"></select>
+  </div>
+  <div class="field" id="txMemberField" style="display:none;">
+    <label>Who spent it?</label>
+    <div class="hh-chips" id="txMemberChips"></div>
+  </div>
+  <div class="field" id="txDebtLinkField" style="display:none;">
+    <label>Which debt is this for?</label>
+    <select id="txDebtLink"></select>
+  </div>
+  <div class="field" id="txLoanLinkField" style="display:none;">
+    <label id="txLoanLinkLabel">Who are you lending to?</label>
+    <input type="text" id="txLoanLinkInput" placeholder="e.g. Chidi">
+    <div class="field-hint" style="font-size:11px;color:var(--muted);margin-top:4px;">Leave blank to just log this as a plain expense — otherwise this creates a tracked entry on the Lent Out card.</div>
+  </div>
+  <div class="field">
+    <label>Payment method</label>
+    <select id="txMethod">
+      <option value="">Not specified</option>
+      <option value="Cash">Cash</option>
+      <option value="Card">Card</option>
+      <option value="USSD">USSD</option>
+      <option value="Mobile Wallet">Mobile Wallet</option>
+      <option value="Bank Transfer">Bank Transfer</option>
+    </select>
+  </div>
+  <div class="field">
+    <label>Description</label>
+    <input type="text" id="txDesc" placeholder="e.g. Bolt ride to work" autocomplete="off">
+    <div class="desc-chips" id="descSuggest"></div>
+  </div>
+  <div class="field">
+    <label>Date</label>
+    <input type="date" id="txDate">
+  </div>
+  <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin:0 0 18px;cursor:pointer;">
+    <input type="checkbox" id="txRecurring" style="width:auto;margin:0;"> 🔁 Repeats every cycle (auto-logged again next cycle)
+  </label>
+  <button class="btn btn-primary" id="txSaveBtn">Add expense</button>
+  <button class="btn btn-ghost" id="txCancelBtn">Cancel</button>
+</div>
+
+<!-- Add extra income sheet -->
+<div class="sheet" id="extraSheet">
+  <div class="sheet-handle"></div>
+  <h3>Add extra income</h3>
+  <div class="field">
+    <label>Amount</label>
+    <input type="number" id="extraAmount" class="amt-input" inputmode="decimal" placeholder="0" min="0" step="1">
+  </div>
+  <div class="field">
+    <label>Currency received in</label>
+    <select id="extraCurrency"></select>
+  </div>
+  <div class="fx-preview" id="fxPreview" style="display:none;"></div>
+  <div class="field">
+    <label>Source</label>
+    <input type="text" id="extraSource" placeholder="e.g. Freelance gig, gift, refund">
+  </div>
+  <div class="field">
+    <label>Date</label>
+    <input type="date" id="extraDate">
+  </div>
+  <button class="btn btn-primary" id="extraSaveBtn">Add to income</button>
+  <button class="btn btn-ghost" id="extraCancelBtn">Cancel</button>
+</div>
+
+<!-- What-if simulator sheet -->
+<div class="sheet" id="whatIfSheet">
+  <div class="sheet-handle"></div>
+  <h3>🔮 What if…</h3>
+  <p style="font-size:11.5px;color:var(--muted);margin:-8px 0 14px;line-height:1.5;">
+    See the impact of cutting a category's spending — nothing here changes your real budget, it's just a preview.</p>
+  <div class="field">
+    <label>Category</label>
+    <select id="whatIfCategory"></select>
+  </div>
+  <div class="field">
+    <label>Cut by <span id="whatIfPctLabel">20%</span></label>
+    <input type="range" id="whatIfSlider" min="0" max="100" value="20" step="5" style="width:100%;">
+  </div>
+  <div class="whatif-result" id="whatIfResult"></div>
+  <button class="btn btn-ghost" id="whatIfCloseBtn">Close</button>
+</div>
+
+<!-- Debt payment sheet -->
+<div class="tour-block" id="tourBlock" style="display:none;"></div>
+<div class="tour-spot" id="tourSpot" style="display:none;"></div>
+<div class="tour-card" id="tourCard" role="dialog" aria-modal="true" aria-labelledby="tourTitle" style="display:none;">
+  <div class="tour-step" id="tourStep"></div>
+  <h3 class="tour-title" id="tourTitle"></h3>
+  <p class="tour-text" id="tourText"></p>
+  <div class="tour-dots" id="tourDots"></div>
+  <div class="tour-actions">
+    <button class="tour-skip" id="tourSkipBtn" type="button">Skip tour</button>
+    <button class="btn btn-ghost" id="tourBackBtn" type="button">Back</button>
+    <button class="btn btn-primary" id="tourNextBtn" type="button">Next</button>
+  </div>
+</div>
+
+<div class="sheet" id="debtCashSheet">
+  <div class="sheet-handle"></div>
+  <h3 id="debtCashTitle">What's this loan for?</h3>
+  <p id="debtCashSub" style="font-size:12px;color:var(--muted);margin:-6px 0 14px;line-height:1.5;"></p>
+  <div id="debtCashChoices" style="display:flex;flex-direction:column;gap:8px;">
+    <button class="btn btn-primary" id="debtCashAddBalanceBtn">Add it to my balance — I can spend this</button>
+    <button class="btn btn-ghost" id="debtCashSpentBtn">I've already spent it — log the expense</button>
+    <button class="btn btn-ghost" id="debtCashSkipBtn" style="color:var(--muted);">Just track the debt — don't touch my balance</button>
+  </div>
+  <div id="debtCashSpentForm" style="display:none;margin-top:4px;">
+    <div class="field">
+      <label>What category?</label>
+      <select id="debtCashCategory"></select>
+    </div>
+    <div class="field">
+      <label>What for? (optional)</label>
+      <input type="text" id="debtCashDesc" placeholder="e.g. Rent, car repair, school fees">
+    </div>
+    <button class="btn btn-primary" id="debtCashSpentSaveBtn">Log expense</button>
+    <button class="btn btn-ghost" id="debtCashSpentBackBtn" style="margin-top:8px;">Back</button>
+  </div>
+</div>
+
+<div class="sheet" id="writeOffSheet">
+  <div class="sheet-handle"></div>
+  <h3 id="writeOffTitle">Write off</h3>
+  <p id="writeOffNote" style="font-size:12px;color:var(--muted);margin:-6px 0 12px;line-height:1.55;"></p>
+  <div class="field"><label>Amount to write off</label><input type="number" id="writeOffAmount" min="0" step="1" inputmode="decimal"></div>
+  <p id="writeOffRemainingHint" style="font-size:11.5px;color:var(--muted);margin:-6px 0 12px;"></p>
+  <div class="field"><label>Date</label><input type="date" id="writeOffDate"></div>
+  <button class="btn btn-primary" id="writeOffSaveBtn">Write off</button>
+  <button class="btn btn-ghost" id="writeOffCancelBtn" style="margin-top:8px;">Cancel</button>
+</div>
+
+<div class="sheet" id="revealSheet">
+  <div class="sheet-handle"></div>
+  <h3>Show your figures</h3>
+  <p id="revealText" style="font-size:12px;color:var(--muted);margin:-6px 0 12px;line-height:1.5;"></p>
+  <div id="revealPinRow">
+    <input type="password" id="revealPinInput" class="lock-input" placeholder="6-digit PIN" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off" style="text-align:center;letter-spacing:.4em;">
+    <button class="btn btn-primary" id="revealPinBtn" type="button" style="margin-top:10px;">Show figures</button>
+  </div>
+  <button class="btn btn-ghost" id="revealBioBtn" type="button" style="margin-top:8px;">Use fingerprint / face</button>
+  <div id="revealError" style="color:var(--red);font-size:12px;min-height:16px;margin-top:8px;"></div>
+  <button class="btn btn-ghost" id="revealCancelBtn" type="button" style="margin-top:4px;">Cancel</button>
+</div>
+
+<div class="sheet" id="payEditSheet">
+  <div class="sheet-handle"></div>
+  <h3 id="payEditTitle">Edit payment</h3>
+  <p id="payEditNote" style="font-size:12px;color:var(--muted);margin:-6px 0 12px;line-height:1.5;"></p>
+  <div class="field"><label>Amount</label><input type="number" id="payEditAmount" min="0" step="1"></div>
+  <div class="field"><label>Date</label><input type="date" id="payEditDate"></div>
+  <button class="btn btn-primary" id="payEditSaveBtn">Save changes</button>
+  <button class="btn btn-danger" id="payEditDeleteBtn" style="margin-top:8px;">Delete this payment</button>
+  <button class="btn btn-ghost" id="payEditCancelBtn" style="margin-top:8px;">Cancel</button>
+</div>
+
+<div class="sheet" id="debtEditSheet">
+  <div class="sheet-handle"></div>
+  <h3>Edit debt</h3>
+  <p style="font-size:12px;color:var(--muted);margin:-6px 0 12px;line-height:1.5;">Change who it's owed to, why, or the total owed. Payments already logged stay attached to this debt.</p>
+  <div class="field"><label>Owed to</label><input type="text" id="debtEditCreditor"></div>
+  <div class="field"><label>Reason</label><input type="text" id="debtEditReason"></div>
+  <div class="field"><label>Total owed</label><input type="number" id="debtEditAmount" min="0" step="1"></div>
+  <div class="field"><label>Interest rate (%/yr)</label><input type="number" id="debtEditInterest" min="0" step="0.1"></div>
+  <button class="btn btn-primary" id="debtEditSaveBtn">Save changes</button>
+  <button class="btn btn-ghost" id="debtEditCancelBtn" style="margin-top:8px;">Cancel</button>
+</div>
+
+<div class="sheet" id="payHistSheet">
+  <div class="sheet-handle"></div>
+  <h3 id="payHistTitle">Payment history</h3>
+  <p id="payHistSummary" style="font-size:12px;color:var(--muted);margin:-6px 0 10px;line-height:1.5;"></p>
+  <div id="payHistList" style="max-height:52vh;overflow-y:auto;"></div>
+  <button class="btn btn-ghost" id="payHistCloseBtn" style="margin-top:10px;">Close</button>
+</div>
+
+<div class="sheet" id="debtPaySheet">
+  <div class="sheet-handle"></div>
+  <h3 id="debtPayTitle">Log a payment</h3>
+  <div class="field">
+    <label>Amount (₦)</label>
+    <input type="number" id="debtPayAmount" class="amt-input" inputmode="decimal" placeholder="0" min="0" step="1">
+  </div>
+  <div class="field">
+    <label>Payment method</label>
+    <select id="debtPayMethod">
+      <option value="">Not specified</option>
+      <option value="Cash">Cash</option>
+      <option value="Card">Card</option>
+      <option value="USSD">USSD</option>
+      <option value="Mobile Wallet">Mobile Wallet</option>
+      <option value="Bank Transfer">Bank Transfer</option>
+    </select>
+  </div>
+  <div class="field">
+    <label>Date</label>
+    <input type="date" id="debtPayDate">
+  </div>
+  <button class="btn btn-primary" id="debtPaySaveBtn">Log payment</button>
+  <button class="btn btn-ghost" id="debtPayCancelBtn">Cancel</button>
+</div>
+
+<div class="sheet" id="loanRepaySheet">
+  <div class="sheet-handle"></div>
+  <h3 id="loanRepayTitle">Log a repayment</h3>
+  <div class="field">
+    <label>Amount (₦)</label>
+    <input type="number" id="loanRepayAmount" class="amt-input" inputmode="decimal" placeholder="0" min="0" step="1">
+  </div>
+  <div class="field">
+    <label>Received via</label>
+    <select id="loanRepayMethod">
+      <option value="">Not specified</option>
+      <option value="Cash">Cash</option>
+      <option value="Card">Card</option>
+      <option value="USSD">USSD</option>
+      <option value="Mobile Wallet">Mobile Wallet</option>
+      <option value="Bank Transfer">Bank Transfer</option>
+    </select>
+  </div>
+  <div class="field">
+    <label>Date</label>
+    <input type="date" id="loanRepayDate">
+  </div>
+  <button class="btn btn-primary" id="loanRepaySaveBtn">Log repayment</button>
+  <button class="btn btn-ghost" id="loanRepayCancelBtn">Cancel</button>
+</div>
+
+<div class="sheet" id="adjustSheet">
+  <div class="sheet-handle"></div>
+  <h3 id="adjustSheetTitle">Adjust</h3>
+  <div class="field">
+    <label id="adjustSheetLabel">Amount</label>
+    <input type="number" id="adjustSheetInput" class="amt-input" inputmode="decimal" step="1">
+  </div>
+  <div id="adjustSheetHint" style="font-size:11px;color:var(--muted);margin:-8px 0 12px;line-height:1.4;"></div>
+  <button class="btn btn-primary" id="adjustSheetSaveBtn">Save</button>
+  <button class="btn btn-ghost" id="adjustSheetCancelBtn">Cancel</button>
+</div>
+
+<!-- Report sheet -->
+<div class="sheet" id="catRecentSheet">
+  <div class="sheet-handle"></div>
+  <h3 id="catRecentTitle">Category</h3>
+  <p id="catRecentSummary" style="font-size:12px;color:var(--muted);margin:-6px 0 10px;line-height:1.5;"></p>
+  <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:2px;">Latest 3 expenses</div>
+  <div id="catRecentList"></div>
+  <button class="btn btn-primary" id="catRecentAddBtn" style="margin-top:12px;">Add expense here</button>
+  <button class="btn btn-ghost" id="catRecentCloseBtn" style="margin-top:8px;">Close</button>
+</div>
+
+<div class="sheet" id="loanDueSheet">
+  <div class="sheet-handle"></div>
+  <h3 id="loanDueTitle">Repayment date</h3>
+  <div class="field"><label>Date they promised to pay back</label><input type="date" id="loanDueInput"></div>
+  <button class="btn btn-primary" id="loanDueSaveBtn">Save date</button>
+  <button class="btn btn-ghost" id="loanDueClearBtn" style="margin-top:8px;">Remove date</button>
+  <button class="btn btn-ghost" id="loanDueCancelBtn" style="margin-top:8px;">Cancel</button>
+</div>
+
+<div class="sheet" id="loanAlertSheet">
+  <div class="sheet-handle"></div>
+  <h3>Loan repayments to follow up</h3>
+  <p style="font-size:12px;color:var(--muted);margin:-6px 0 10px;line-height:1.5;">These are due within 3 days or already late.</p>
+  <div id="loanAlertList" style="max-height:48vh;overflow-y:auto;"></div>
+  <button class="btn btn-primary" id="loanAlertOpenBtn" style="margin-top:12px;">Open loans</button>
+  <button class="btn btn-ghost" id="loanAlertCloseBtn" style="margin-top:8px;">Dismiss</button>
+</div>
+
+<div class="sheet" id="deleteAccountSheet">
+  <div class="sheet-handle"></div>
+  <h3>Delete your account</h3>
+  <p style="font-size:12.5px;color:var(--muted);line-height:1.55;margin:-4px 0 12px;">
+    This permanently deletes your login and everything in your account: expenses, budgets, history, debts, loans, household, reminders and share links.
+    It cannot be undone and nobody can recover it afterwards. Export or share a report first if you want a copy.
+  </p>
+  <div class="field"><label>Signed in as</label><div id="deleteEmail" style="font-size:14px;padding:4px 0;"></div></div>
+  <div class="field"><label>Your password</label><input type="password" id="deletePassword" autocomplete="current-password"></div>
+  <div class="field"><label>Type DELETE to confirm</label><input type="text" id="deleteConfirmInput" autocomplete="off" autocapitalize="characters"></div>
+  <div id="turnstileDeleteBox" style="margin:8px 0;"></div>
+  <div id="deleteError" style="color:var(--red);font-size:12px;min-height:16px;margin-bottom:6px;"></div>
+  <button class="btn btn-primary" id="deleteAccountGoBtn" type="button" style="background:var(--red);">Delete everything permanently</button>
+  <button class="btn btn-ghost" id="deleteAccountCancelBtn" type="button" style="margin-top:8px;">Cancel</button>
+</div>
+
+<div class="sheet" id="reportSheet">
+  <div class="sheet-handle"></div>
+  <h3 id="reportTitle">Cycle report</h3>
+  <div class="report-charts">
+    <div style="flex:1;min-width:120px;">
+      <div style="font-size:10px;color:var(--muted);margin-bottom:4px;" id="reportPieLabel">By category</div>
+      <canvas id="reportPieCanvas" width="200" height="180"></canvas>
+    </div>
+    <div style="flex:1;min-width:120px;">
+      <div style="font-size:10px;color:var(--muted);margin-bottom:4px;" id="reportBarLabel">Daily spend</div>
+      <canvas id="reportBarCanvas" width="200" height="180"></canvas>
+    </div>
+  </div>
+  <div class="field">
+    <textarea id="reportText" rows="12" readonly></textarea>
+  </div>
+  <div class="btn-row">
+    <button class="btn btn-primary" id="copyReportBtn">Copy text</button>
+    <button class="btn btn-teal" id="downloadPdfBtn">Download PDF</button>
+    <button class="btn btn-ghost" id="downloadCsvBtn" style="width:auto;padding:12px 16px;">CSV</button>
+  </div>
+  <button class="btn btn-ghost" id="emailReportBtn">Email it</button>
+  <button class="btn btn-ghost" id="shareReportBtn">🔗 Create shareable link (7 days)</button>
+  <div id="shareResult" style="display:none;"></div>
+  <button class="btn btn-ghost" id="reportCloseBtn">Close</button>
+</div>
+
+
+<!-- AI assistant sheet -->
+<div class="sheet ai-sheet" id="aiSheet">
+  <div class="sheet-handle"></div>
+  <div class="ai-sheet-header">
+    <div class="ai-avatar"><svg viewBox="0 0 32 32" width="22" height="22" aria-hidden="true"><use href="#lotusSym"/></svg></div>
+    <div>
+      <h3 style="margin:0;">Lotus</h3>
+      <p style="font-size:11px;color:var(--muted);margin:2px 0 0;">Your budgeting assistant · based on this cycle's numbers — not financial advice</p>
+    </div>
+    <button class="ai-clear-btn" id="aiClearBtn" title="Clear conversation" aria-label="Clear conversation">🗑</button>
+  </div>
+  <div class="ai-chat" id="aiChat"></div>
+  <div class="ai-chips" id="aiChips"></div>
+  <div class="ai-input-row">
+    <input type="text" id="aiQuestion" placeholder="Ask Lotus about your spending, budget or savings…">
+    <button class="ai-send-btn" id="aiAskBtn">➤</button>
+  </div>
+  <button class="btn btn-ghost" id="aiCloseBtn" style="margin-top:10px;">Close</button>
+</div>
+
+<!-- Custom confirm modal -->
+<div class="confirm-box" id="confirmBox">
+  <h4 id="confirmTitle">Are you sure?</h4>
+  <p id="confirmMsg"></p>
+  <div class="btn-row">
+    <button class="btn btn-ghost" id="confirmCancelBtn">Cancel</button>
+    <button class="btn btn-danger" id="confirmOkBtn" style="margin-top:0;">Confirm</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"><span id="toastMsg"></span><button class="toast-undo-btn" id="toastUndoBtn" style="display:none;">Undo</button></div>
+
+<!-- Bot protection on login/signup/password-reset — see config.js for TURNSTILE_SITE_KEY.
+     explicit render so app.js controls exactly when/where each widget renders. -->
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
+<script type="module" src="/src/app.js"></script>
+</body>
+</html>
